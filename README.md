@@ -59,68 +59,16 @@ Specify a custom subdivision frequency:
 ```
 
 The frequency parameter controls the fineness of the subdivision:
-- `frequency=1`: Original icosahedron (12 vertices, 20 faces)
+- `frequency=1`: Icosahedron (12 vertices, 20 faces)
 - `frequency=2`: 42 vertices, 80 faces
 - `frequency=3`: 92 vertices, 180 faces
 - `frequency=4`: 162 vertices, 320 faces
 
-## Example Output
-
-```
-Spherical Tiling Demo - Goldberg Subdivision with Optimization
-==============================================================
-
-Parameters:
-  Sphere radius: 1
-  Subdivision frequency: 4
-
-[1/5] Generating icosahedron...
-  Generated 12 vertices and 20 faces
-
-[2/5] Performing Goldberg Class-I subdivision...
-  Generated 162 vertices and 320 faces
-
-[3/5] Building tile graph...
-  Built graph with 162 nodes and 480 edges
-
-[4/5] Constructing dual cells (Voronoi regions)...
-  Computed dual cell areas and angle variances
-
-[5/5] Running spatially-weighted optimization...
-  Optimization complete
-
-=== Tile Graph Statistics ===
-Number of nodes: 162
-Number of edges: 480
-
---- Area Statistics ---
-Total area: 12.566371
-Sphere area: 12.566371
-Coverage: 100.000000%
-Average area per node: 0.077570
-Min area: 0.051369
-Max area: 0.084717
-Area variance: 42.990737%
-
---- Angle Statistics ---
-Average angle defect: 0.077570 radians
-Average angle variance: 0.012264
-Min angle variance: 0.000000
-Max angle variance: 0.028779
-
---- Energy Statistics ---
-Average energy per node: 0.009156
-Total energy: 1.483195
-
---- Sample Nodes ---
-      ID    Latitude          Area      AngleVar        Energy  Neighbors
---------------------------------------------------------------------------
-      68   90.000000      0.083145      0.006211      0.006211           6
-      14    0.000000      0.051369      0.000000      0.026201           5
-      83  -90.000000      0.083145      0.006211      0.006211           6
-```
-
 ## Algorithm Details
+
+### Icosahedron Rotation
+
+The algorithm constructs a base icosahedron, with 12 vertices in a 1-5-5-1 latitude arangement; meaning 1 at the north pole, five others in the northern hemesphere, and symmetrical across the equator.  
 
 ### Goldberg Subdivision
 
