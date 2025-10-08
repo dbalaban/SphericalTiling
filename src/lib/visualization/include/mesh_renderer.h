@@ -1,0 +1,57 @@
+#pragma once
+
+#include "tile_graph.h"
+#include <Eigen/Dense>
+#include <vector>
+#include <glad/gl.h>
+
+namespace spherical_tiling {
+
+class MeshRenderer {
+public:
+    MeshRenderer();
+    ~MeshRenderer();
+    
+    // Set mesh data for primal (triangular) mesh
+    void setPrimalMesh(const std::vector<Eigen::Vector3d>& vertices,
+                       const std::vector<Eigen::Vector3i>& faces);
+    
+    // Set mesh data for dual (Voronoi) mesh from TileGraph
+    void setDualMesh(const TileGraph& graph, double radius);
+    
+    // Render meshes
+    void renderPrimal(const Eigen::Matrix4f& viewProj, const Eigen::Vector3f& color);
+    void renderDual(const Eigen::Matrix4f& viewProj, const Eigen::Vector3f& color);
+    
+    // Clear mesh data
+    void clearPrimal();
+    void clearDual();
+    
+private:
+    void setupShaders();
+    void setupPrimalBuffers();
+    void setupDualBuffers();
+    
+    // Shader program
+    GLuint shaderProgram_;
+    GLint mvpLocation_;
+    GLint colorLocation_;
+    
+    // Primal mesh data
+    std::vector<float> primalVertices_;
+    std::vector<unsigned int> primalIndices_;
+    GLuint primalVAO_;
+    GLuint primalVBO_;
+    GLuint primalEBO_;
+    bool hasPrimalMesh_;
+    
+    // Dual mesh data (edges only)
+    std::vector<float> dualVertices_;
+    std::vector<unsigned int> dualIndices_;
+    GLuint dualVAO_;
+    GLuint dualVBO_;
+    GLuint dualEBO_;
+    bool hasDualMesh_;
+};
+
+} // namespace spherical_tiling
