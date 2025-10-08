@@ -8,16 +8,49 @@ std::vector<Eigen::Vector3d> generateIcosahedron(double radius) {
     // Golden ratio
     const double phi = (1.0 + std::sqrt(5.0)) / 2.0;
     
-    // Unnormalized vertices of icosahedron
+    // Unnormalized vertices of icosahedron in standard orientation
     std::vector<Eigen::Vector3d> vertices = {
         {-1,  phi,  0}, { 1,  phi,  0}, {-1, -phi,  0}, { 1, -phi,  0},
         { 0, -1,  phi}, { 0,  1,  phi}, { 0, -1, -phi}, { 0,  1, -phi},
         { phi,  0, -1}, { phi,  0,  1}, {-phi,  0, -1}, {-phi,  0,  1}
     };
     
-    // Normalize to sphere of given radius
+    // Normalize first
     for (auto& v : vertices) {
-        v = v.normalized() * radius;
+        v.normalize();
+    }
+    
+    // Rotate the icosahedron so that vertex 0 is at the north pole (+Z axis)
+    // Vertex 0 is at (-1, phi, 0) normalized = approximately (-0.356822, 0.934172, 0)
+    // We need to rotate this to (0, 0, 1)
+    
+    Eigen::Vector3d originalVertex = vertices[0];
+    Eigen::Vector3d targetVertex(0, 0, 1);
+    
+    // Compute rotation axis (perpendicular to both vectors)
+    Eigen::Vector3d rotationAxis = originalVertex.cross(targetVertex);
+    double rotationAxisNorm = rotationAxis.norm();
+    
+    if (rotationAxisNorm > 1e-10) {
+        rotationAxis.normalize();
+        
+        // Compute rotation angle
+        double cosAngle = originalVertex.dot(targetVertex);
+        cosAngle = std::max(-1.0, std::min(1.0, cosAngle));
+        double angle = std::acos(cosAngle);
+        
+        // Apply Rodrigues' rotation formula to all vertices
+        for (auto& v : vertices) {
+            Eigen::Vector3d vRot = v * std::cos(angle) + 
+                                   rotationAxis.cross(v) * std::sin(angle) + 
+                                   rotationAxis * (rotationAxis.dot(v)) * (1.0 - std::cos(angle));
+            v = vRot;
+        }
+    }
+    
+    // Scale to desired radius
+    for (auto& v : vertices) {
+        v *= radius;
     }
     
     return vertices;

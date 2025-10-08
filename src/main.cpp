@@ -133,52 +133,62 @@ void printStatistics(const TileGraph& graph, double radius) {
         }
         zLevels.push_back({currentZ, currentCount});
         
-        // Report the distribution
-        int northernPentagons = 0;
-        int equatorialPentagons = 0;
-        int southernPentagons = 0;
+        // Identify pole pentagons (near z = ±radius)
+        int northPoleCount = 0, southPoleCount = 0;
+        int northRingCount = 0, southRingCount = 0;
         
         for (const auto& [z, count] : zLevels) {
-            if (z > zTolerance) {
-                northernPentagons += count;
-                std::cout << "    Northern: " << count << " pentagons at z ≈ " 
-                          << std::fixed << std::setprecision(3) << z << "\n";
-            } else if (z < -zTolerance) {
-                southernPentagons += count;
-                std::cout << "    Southern: " << count << " pentagons at z ≈ " 
-                          << std::fixed << std::setprecision(3) << z << "\n";
+            double absZ = std::abs(z);
+            if (absZ > radius - 0.01) {
+                // At pole
+                if (z > 0) {
+                    northPoleCount += count;
+                    std::cout << "    North pole: " << count << " pentagon at z ≈ " 
+                              << std::fixed << std::setprecision(3) << z 
+                              << " (lat ≈ 90°)\n";
+                } else {
+                    southPoleCount += count;
+                    std::cout << "    South pole: " << count << " pentagon at z ≈ " 
+                              << std::fixed << std::setprecision(3) << z 
+                              << " (lat ≈ -90°)\n";
+                }
             } else {
-                equatorialPentagons += count;
-                std::cout << "    Equatorial: " << count << " pentagons at z ≈ 0\n";
+                // In ring around pole
+                double lat = std::asin(z / radius) * 180.0 / M_PI;
+                if (z > 0) {
+                    northRingCount += count;
+                    std::cout << "    Northern ring: " << count << " pentagons at lat ≈ " 
+                              << std::fixed << std::setprecision(1) << lat << "°\n";
+                } else {
+                    southRingCount += count;
+                    std::cout << "    Southern ring: " << count << " pentagons at lat ≈ " 
+                              << std::fixed << std::setprecision(1) << lat << "°\n";
+                }
             }
         }
         
-        std::cout << "\n  Total pentagons per region:\n";
-        std::cout << "    Northern hemisphere: " << northernPentagons;
-        if (northernPentagons == 6) {
+        std::cout << "\n  Polar cap summary:\n";
+        std::cout << "    Northern cap: " << northPoleCount << " pole + " 
+                  << northRingCount << " ring = " << (northPoleCount + northRingCount);
+        if (northPoleCount == 1 && northRingCount == 5) {
             std::cout << " ✓";
+        } else {
+            structureValid = false;
         }
         std::cout << "\n";
         
-        if (equatorialPentagons > 0) {
-            std::cout << "    Equatorial band: " << equatorialPentagons << "\n";
-        }
-        
-        std::cout << "    Southern hemisphere: " << southernPentagons;
-        if (southernPentagons == 6) {
+        std::cout << "    Southern cap: " << southPoleCount << " pole + " 
+                  << southRingCount << " ring = " << (southPoleCount + southRingCount);
+        if (southPoleCount == 1 && southRingCount == 5) {
             std::cout << " ✓";
+        } else {
+            structureValid = false;
         }
         std::cout << "\n";
         
-        // The structure has 6 pentagons per hemisphere when counting equatorial as split
-        int effectiveNorth = northernPentagons + (equatorialPentagons + 1) / 2;
-        int effectiveSouth = southernPentagons + equatorialPentagons / 2;
-        
-        if (effectiveNorth == 6 && effectiveSouth == 6) {
-            std::cout << "  ✓ Correct polar cap distribution: 6 pentagons per hemisphere\n";
-            std::cout << "    (including " << equatorialPentagons << " equatorial pentagons)\n";
-        } else if (northernPentagons + equatorialPentagons + southernPentagons == 12) {
-            std::cout << "  ✓ Valid Goldberg polyhedron: 12 pentagonal dual faces total\n";
+        if (northPoleCount == 1 && northRingCount == 5 && 
+            southPoleCount == 1 && southRingCount == 5) {
+            std::cout << "\n  ✓ Perfect polar cap structure: 1 pentagon at each pole + 5-pentagon ring\n";
         }
     }
     
