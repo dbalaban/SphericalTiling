@@ -101,6 +101,12 @@ void printStatistics(const TileGraph& graph, double radius) {
                   << std::setw(14) << node.angle_variance
                   << std::setw(14) << node.energy
                   << std::setw(12) << node.neighbors.size() << "\n";
+        
+        // Print neighbor details for debugging
+        if (node.neighbors.size() > 0 && node.area == 0.0) {
+            std::cout << "    Note: Node " << idx << " has " << node.neighbors.size() 
+                      << " neighbors but zero area (incomplete cycle)\n";
+        }
     }
     
     std::cout << "\n";

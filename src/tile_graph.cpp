@@ -28,7 +28,7 @@ void TileGraph::buildFromTriangulation(
     // Build adjacency information from faces
     std::map<std::pair<int, int>, int> edgeCount;
     
-    // Store faces adjacent to each vertex for ordering neighbors later
+    // Store faces for each vertex with adjacent vertices in order
     std::map<int, std::vector<std::pair<int, int>>> vertexFaces;
     
     for (const auto& face : faces) {
@@ -36,7 +36,7 @@ void TileGraph::buildFromTriangulation(
         int v1 = face[1];
         int v2 = face[2];
         
-        // For each vertex, store the pair of adjacent vertices in order
+        // For each vertex, store the pair of adjacent vertices in the order they appear in the face
         vertexFaces[v0].push_back({v1, v2});
         vertexFaces[v1].push_back({v2, v0});
         vertexFaces[v2].push_back({v0, v1});
@@ -60,31 +60,33 @@ void TileGraph::buildFromTriangulation(
     
     // Order neighbors cyclically for each vertex
     for (size_t i = 0; i < nodes_.size(); ++i) {
-        const auto& faceList = vertexFaces[i];
+        auto& faceList = vertexFaces[i];
         if (faceList.empty()) continue;
         
         std::vector<int> orderedNeighbors;
-        std::set<int> used;
+        std::map<int, int> nextNeighbor; // Map from one neighbor to the next
         
-        // Start with the first face
-        int current = faceList[0].first;
-        orderedNeighbors.push_back(current);
-        used.insert(current);
+        // Build a map of neighbor transitions
+        for (const auto& [a, b] : faceList) {
+            nextNeighbor[a] = b;
+        }
         
-        // Find the chain of neighbors
-        while (orderedNeighbors.size() < faceList.size()) {
-            bool found = false;
-            // Find a face that starts with current
-            for (const auto& [a, b] : faceList) {
-                if (a == current && used.find(b) == used.end()) {
-                    current = b;
-                    orderedNeighbors.push_back(current);
-                    used.insert(current);
-                    found = true;
-                    break;
-                }
+        // Start from any neighbor
+        if (nextNeighbor.empty()) continue;
+        
+        int start = nextNeighbor.begin()->first;
+        int current = start;
+        
+        // Follow the chain until we complete the cycle
+        for (size_t count = 0; count < faceList.size(); ++count) {
+            orderedNeighbors.push_back(current);
+            
+            auto it = nextNeighbor.find(current);
+            if (it == nextNeighbor.end()) {
+                // Chain broken - this shouldn't happen for a closed mesh
+                break;
             }
-            if (!found) break;
+            current = it->second;
         }
         
         nodes_[i].neighbors = orderedNeighbors;
