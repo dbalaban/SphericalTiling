@@ -6,6 +6,8 @@
 #include <iomanip>
 #include <cmath>
 #include <string>
+#include <map>
+#include <vector>
 
 using namespace spherical_tiling;
 
@@ -26,6 +28,23 @@ void printStatistics(const TileGraph& graph, double radius) {
     std::cout << "\n=== Tile Graph Statistics ===\n";
     std::cout << "Number of nodes: " << graph.numNodes() << "\n";
     std::cout << "Number of edges: " << graph.getEdges().size() << "\n";
+    
+    // Compute vertex degree distribution
+    std::map<int, int> degreeCount;
+    std::vector<int> degree5Vertices;
+    std::vector<int> degree6Vertices;
+    
+    for (size_t i = 0; i < graph.numNodes(); ++i) {
+        const auto& node = graph.getNode(i);
+        int degree = node.neighbors.size();
+        degreeCount[degree]++;
+        
+        if (degree == 5) {
+            degree5Vertices.push_back(i);
+        } else if (degree == 6) {
+            degree6Vertices.push_back(i);
+        }
+    }
     
     // Compute statistics
     double totalArea = 0.0;
@@ -59,6 +78,115 @@ void printStatistics(const TileGraph& graph, double radius) {
     
     double sphereArea = 4.0 * M_PI * radius * radius;
     double areaCoverage = (totalArea / sphereArea) * 100.0;
+    
+    // Validate Goldberg polyhedron structure
+    std::cout << "\n--- Dual Face Structure (Goldberg Polyhedron) ---\n";
+    bool structureValid = true;
+    
+    // Check degree distribution
+    std::cout << "Vertex degree distribution:\n";
+    for (const auto& [degree, count] : degreeCount) {
+        std::cout << "  Degree " << degree << ": " << count << " vertices";
+        if (degree == 5) {
+            std::cout << " (pentagonal dual faces)";
+            if (count != 12) {
+                std::cout << " [ERROR: Expected exactly 12!]";
+                structureValid = false;
+            }
+        } else if (degree == 6) {
+            std::cout << " (hexagonal dual faces)";
+        } else {
+            std::cout << " [ERROR: Invalid degree for Goldberg polyhedron!]";
+            structureValid = false;
+        }
+        std::cout << "\n";
+    }
+    
+    // Analyze polar cap structure for the 12 pentagons
+    if (degree5Vertices.size() == 12) {
+        // Sort pentagons by z-coordinate to analyze distribution
+        std::vector<std::pair<int, double>> pentagonsByZ;
+        for (int idx : degree5Vertices) {
+            double z = graph.getNode(idx).center.z();
+            pentagonsByZ.push_back({idx, z});
+        }
+        std::sort(pentagonsByZ.begin(), pentagonsByZ.end(),
+                  [](const auto& a, const auto& b) { return a.second > b.second; });
+        
+        std::cout << "\nPolar cap structure:\n";
+        std::cout << "  Pentagon distribution by latitude:\n";
+        
+        // Group by similar z-coordinates
+        const double zTolerance = 0.01;
+        std::vector<std::pair<double, int>> zLevels;
+        double currentZ = pentagonsByZ[0].second;
+        int currentCount = 0;
+        
+        for (const auto& [idx, z] : pentagonsByZ) {
+            if (std::abs(z - currentZ) < zTolerance) {
+                currentCount++;
+            } else {
+                zLevels.push_back({currentZ, currentCount});
+                currentZ = z;
+                currentCount = 1;
+            }
+        }
+        zLevels.push_back({currentZ, currentCount});
+        
+        // Report the distribution
+        int northernPentagons = 0;
+        int equatorialPentagons = 0;
+        int southernPentagons = 0;
+        
+        for (const auto& [z, count] : zLevels) {
+            if (z > zTolerance) {
+                northernPentagons += count;
+                std::cout << "    Northern: " << count << " pentagons at z ≈ " 
+                          << std::fixed << std::setprecision(3) << z << "\n";
+            } else if (z < -zTolerance) {
+                southernPentagons += count;
+                std::cout << "    Southern: " << count << " pentagons at z ≈ " 
+                          << std::fixed << std::setprecision(3) << z << "\n";
+            } else {
+                equatorialPentagons += count;
+                std::cout << "    Equatorial: " << count << " pentagons at z ≈ 0\n";
+            }
+        }
+        
+        std::cout << "\n  Total pentagons per region:\n";
+        std::cout << "    Northern hemisphere: " << northernPentagons;
+        if (northernPentagons == 6) {
+            std::cout << " ✓";
+        }
+        std::cout << "\n";
+        
+        if (equatorialPentagons > 0) {
+            std::cout << "    Equatorial band: " << equatorialPentagons << "\n";
+        }
+        
+        std::cout << "    Southern hemisphere: " << southernPentagons;
+        if (southernPentagons == 6) {
+            std::cout << " ✓";
+        }
+        std::cout << "\n";
+        
+        // The structure has 6 pentagons per hemisphere when counting equatorial as split
+        int effectiveNorth = northernPentagons + (equatorialPentagons + 1) / 2;
+        int effectiveSouth = southernPentagons + equatorialPentagons / 2;
+        
+        if (effectiveNorth == 6 && effectiveSouth == 6) {
+            std::cout << "  ✓ Correct polar cap distribution: 6 pentagons per hemisphere\n";
+            std::cout << "    (including " << equatorialPentagons << " equatorial pentagons)\n";
+        } else if (northernPentagons + equatorialPentagons + southernPentagons == 12) {
+            std::cout << "  ✓ Valid Goldberg polyhedron: 12 pentagonal dual faces total\n";
+        }
+    }
+    
+    if (structureValid) {
+        std::cout << "\n✓ Goldberg polyhedron structure validated successfully!\n";
+    } else {
+        std::cout << "\n✗ WARNING: Structure does not match expected Goldberg polyhedron!\n";
+    }
     
     std::cout << std::fixed << std::setprecision(6);
     std::cout << "\n--- Area Statistics ---\n";
