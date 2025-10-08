@@ -9,37 +9,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 find_package(Ceres REQUIRED)
 
-# Library
-add_library(spherical_tiling_lib
-    src/goldberg_subdivision.cpp
-    src/tile_graph.cpp
-    src/dual_construction.cpp
-    src/optimization.cpp
-)
+# Add library subdirectories
+add_subdirectory(src/lib/geometric)
+add_subdirectory(src/lib/optimization)
 
-target_include_directories(spherical_tiling_lib PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-
-target_link_libraries(spherical_tiling_lib PUBLIC
-    Eigen3::Eigen
-    Ceres::ceres
-)
-
-# CLI Demo executable
-add_executable(spherical_tiling_demo
-    src/main.cpp
-)
-
-target_link_libraries(spherical_tiling_demo PRIVATE
-    spherical_tiling_lib
-)
-
-# Benchmark executable
-add_executable(spherical_tiling_benchmark
-    src/benchmark.cpp
-)
-
-target_link_libraries(spherical_tiling_benchmark PRIVATE
-    spherical_tiling_lib
-)
+# Add application subdirectory
+add_subdirectory(src/app)
