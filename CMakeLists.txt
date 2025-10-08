@@ -34,3 +34,12 @@ add_executable(spherical_tiling_demo
 target_link_libraries(spherical_tiling_demo PRIVATE
     spherical_tiling_lib
 )
+
+# Benchmark executable
+add_executable(spherical_tiling_benchmark
+    src/benchmark.cpp
+)
+
+target_link_libraries(spherical_tiling_benchmark PRIVATE
+    spherical_tiling_lib
+)

@@ -119,12 +119,14 @@ private:
     double w_angle_;
 };
 
-void optimizeTileGraph(TileGraph& graph, double radius, WeightFunction weightFunc, int maxIterations) {
+void optimizeTileGraph(TileGraph& graph, double radius, WeightFunction weightFunc, int maxIterations, bool silent) {
     // Compute target area (total surface area divided by number of nodes)
     double totalArea = 4.0 * M_PI * radius * radius;
     double targetArea = totalArea / graph.numNodes();
     
-    std::cout << "  Target area per node: " << targetArea << "\n";
+    if (!silent) {
+        std::cout << "  Target area per node: " << targetArea << "\n";
+    }
     
     ceres::Problem problem;
     
@@ -191,8 +193,10 @@ void optimizeTileGraph(TileGraph& graph, double radius, WeightFunction weightFun
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
     
-    std::cout << "  Optimization iterations: " << summary.iterations.size() << "\n";
-    std::cout << "  Final cost: " << summary.final_cost << "\n";
+    if (!silent) {
+        std::cout << "  Optimization iterations: " << summary.iterations.size() << "\n";
+        std::cout << "  Final cost: " << summary.final_cost << "\n";
+    }
     
     // Update graph with optimized positions
     for (size_t i = 0; i < graph.numNodes(); ++i) {

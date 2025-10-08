@@ -20,6 +20,6 @@ double computeAreaWeight(double latitude, WeightFunction func);
 
 // Spatially weighted Ceres optimization that interpolates between equal-area 
 // and equal-angles criteria based on latitude (poles vs equator)
-void optimizeTileGraph(TileGraph& graph, double radius, WeightFunction weightFunc, int maxIterations = 100);
+void optimizeTileGraph(TileGraph& graph, double radius, WeightFunction weightFunc, int maxIterations = 100, bool silent = false);
 
 } // namespace spherical_tiling
