@@ -5,8 +5,22 @@
 #include <iostream>
 #include <iomanip>
 #include <cmath>
+#include <string>
 
 using namespace spherical_tiling;
+
+void printUsage(const char* programName) {
+    std::cout << "Usage: " << programName << " [OPTIONS]\n\n";
+    std::cout << "Options:\n";
+    std::cout << "  --R <value>    Radius of the sphere (default: 1.0)\n";
+    std::cout << "  --q <value>    Goldberg Class-I frequency (default: 3)\n";
+    std::cout << "                 Number of dual-cells given by N=10*q^2+2\n";
+    std::cout << "  --no-opt       Skip optimization step\n";
+    std::cout << "  --help         Display this help message\n";
+    std::cout << "\nExample:\n";
+    std::cout << "  " << programName << " --R 2.5 --q 4\n";
+    std::cout << "  " << programName << " --q 5 --no-opt\n";
+}
 
 void printStatistics(const TileGraph& graph, double radius) {
     std::cout << "\n=== Tile Graph Statistics ===\n";
@@ -116,18 +130,59 @@ int main(int argc, char** argv) {
     std::cout << "Spherical Tiling Demo - Goldberg Subdivision with Optimization\n";
     std::cout << "==============================================================\n";
     
-    // Parameters
+    // Default parameters
     double radius = 1.0;
-    int frequency = 3; // Subdivision frequency (3 means each face is divided into 9 triangles)
+    int frequency = 3; // Subdivision frequency (q in Goldberg Class-I)
+    bool runOptimization = true;
     
-    if (argc > 1) {
-        frequency = std::atoi(argv[1]);
-        if (frequency < 1) frequency = 1;
+    // Parse command-line arguments
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        
+        if (arg == "--help" || arg == "-h") {
+            printUsage(argv[0]);
+            return 0;
+        } else if (arg == "--R") {
+            if (i + 1 < argc) {
+                radius = std::atof(argv[++i]);
+                if (radius <= 0) {
+                    std::cerr << "Error: Radius must be positive\n";
+                    return 1;
+                }
+            } else {
+                std::cerr << "Error: --R requires a value\n";
+                printUsage(argv[0]);
+                return 1;
+            }
+        } else if (arg == "--q") {
+            if (i + 1 < argc) {
+                frequency = std::atoi(argv[++i]);
+                if (frequency < 1) {
+                    std::cerr << "Error: Frequency must be at least 1\n";
+                    return 1;
+                }
+            } else {
+                std::cerr << "Error: --q requires a value\n";
+                printUsage(argv[0]);
+                return 1;
+            }
+        } else if (arg == "--no-opt") {
+            runOptimization = false;
+        } else {
+            std::cerr << "Error: Unknown argument '" << arg << "'\n";
+            printUsage(argv[0]);
+            return 1;
+        }
     }
+    
+    // Calculate expected number of dual cells: N = 10*q^2 + 2
+    int expectedDualCells = 10 * frequency * frequency + 2;
     
     std::cout << "\nParameters:\n";
     std::cout << "  Sphere radius: " << radius << "\n";
-    std::cout << "  Subdivision frequency: " << frequency << "\n";
+    std::cout << "  Goldberg frequency (q): " << frequency << "\n";
+    std::cout << "  Expected dual cells: " << expectedDualCells << "\n";
+    std::cout << "  Optimization: " << (runOptimization ? "enabled" : "disabled") << "\n";
     
     // Step 1: Generate icosahedron
     std::cout << "\n[1/5] Generating icosahedron...\n";
@@ -154,10 +209,14 @@ int main(int argc, char** argv) {
     constructDualCells(graph, radius);
     std::cout << "  Computed dual cell areas and angle variances\n";
     
-    // Step 5: Optimize with Ceres
-    std::cout << "\n[5/5] Running spatially-weighted optimization...\n";
-    optimizeTileGraph(graph, radius);
-    std::cout << "  Optimization complete\n";
+    // Step 5: Optimize with Ceres (if enabled)
+    if (runOptimization) {
+        std::cout << "\n[5/5] Running spatially-weighted optimization...\n";
+        optimizeTileGraph(graph, radius);
+        std::cout << "  Optimization complete\n";
+    } else {
+        std::cout << "\n[5/5] Skipping optimization (--no-opt specified)\n";
+    }
     
     // Print statistics
     printStatistics(graph, radius);
