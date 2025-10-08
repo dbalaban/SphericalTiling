@@ -187,8 +187,9 @@ void optimizeTileGraph(TileGraph& graph, double radius, WeightFunction weightFun
     ceres::Solver::Options options;
     options.max_num_iterations = maxIterations;
     options.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;
-    options.minimizer_progress_to_stdout = false;
+    options.minimizer_progress_to_stdout = true;
     options.num_threads = 4;
+    options.check_gradients = true;
     
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
