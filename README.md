@@ -46,7 +46,7 @@ cmake --build .
 
 ## Usage
 
-Run the demo with default parameters (frequency=3):
+Run the demo with default parameters (radius=1.0, frequency=3):
 
 ```bash
 ./build/spherical_tiling_demo
@@ -57,6 +57,30 @@ Specify a custom subdivision frequency:
 ```bash
 ./build/spherical_tiling_demo 4
 ```
+
+Specify a custom sphere radius:
+
+```bash
+./build/spherical_tiling_demo --R 2.5
+```
+
+Combine both radius and frequency:
+
+```bash
+./build/spherical_tiling_demo --R 2.5 4
+```
+
+Show help message:
+
+```bash
+./build/spherical_tiling_demo --help
+```
+
+### Parameters
+
+- `--R <radius>`: Set the sphere radius (default: 1.0)
+- `--help`: Display usage information
+- `FREQUENCY`: Subdivision frequency (default: 3)
 
 The frequency parameter controls the fineness of the subdivision:
 - `frequency=1`: Original icosahedron (12 vertices, 20 faces)

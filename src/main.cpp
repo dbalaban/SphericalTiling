@@ -112,18 +112,61 @@ void printStatistics(const TileGraph& graph, double radius) {
     std::cout << "\n";
 }
 
+void printUsage(const char* program_name) {
+    std::cout << "Usage: " << program_name << " [OPTIONS] [FREQUENCY]\n";
+    std::cout << "\nOptions:\n";
+    std::cout << "  --R <radius>    Set the sphere radius (default: 1.0)\n";
+    std::cout << "  --help          Show this help message\n";
+    std::cout << "\nArguments:\n";
+    std::cout << "  FREQUENCY       Subdivision frequency (default: 3)\n";
+    std::cout << "                  Controls the fineness of the subdivision:\n";
+    std::cout << "                  - frequency=1: 12 vertices, 20 faces\n";
+    std::cout << "                  - frequency=2: 42 vertices, 80 faces\n";
+    std::cout << "                  - frequency=3: 92 vertices, 180 faces\n";
+    std::cout << "\nExamples:\n";
+    std::cout << "  " << program_name << "               # Use default radius (1.0) and frequency (3)\n";
+    std::cout << "  " << program_name << " 4             # Use frequency 4 with default radius\n";
+    std::cout << "  " << program_name << " --R 2.5 3     # Use radius 2.5 and frequency 3\n";
+}
+
 int main(int argc, char** argv) {
-    std::cout << "Spherical Tiling Demo - Goldberg Subdivision with Optimization\n";
-    std::cout << "==============================================================\n";
-    
     // Parameters
     double radius = 1.0;
     int frequency = 3; // Subdivision frequency (3 means each face is divided into 9 triangles)
     
-    if (argc > 1) {
-        frequency = std::atoi(argv[1]);
-        if (frequency < 1) frequency = 1;
+    // Parse command line arguments
+    int positional_arg_index = 1;
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        
+        if (arg == "--help" || arg == "-h") {
+            printUsage(argv[0]);
+            return 0;
+        } else if (arg == "--R") {
+            if (i + 1 < argc) {
+                radius = std::atof(argv[++i]);
+                if (radius <= 0.0) {
+                    std::cerr << "Error: Radius must be positive\n";
+                    return 1;
+                }
+            } else {
+                std::cerr << "Error: --R requires a value\n";
+                printUsage(argv[0]);
+                return 1;
+            }
+        } else if (arg[0] == '-') {
+            std::cerr << "Error: Unknown option '" << arg << "'\n";
+            printUsage(argv[0]);
+            return 1;
+        } else {
+            // Positional argument (frequency)
+            frequency = std::atoi(arg.c_str());
+            if (frequency < 1) frequency = 1;
+        }
     }
+    
+    std::cout << "Spherical Tiling Demo - Goldberg Subdivision with Optimization\n";
+    std::cout << "==============================================================\n";
     
     std::cout << "\nParameters:\n";
     std::cout << "  Sphere radius: " << radius << "\n";
