@@ -94,6 +94,8 @@ Run the 3D graphical viewer:
 ./bin/spherical_tiling_gui
 ```
 
+**Note**: The GUI requires a display server (X11, Wayland, or macOS window system). It will not run in headless environments.
+
 Features:
 - **Interactive 3D View**: Rotate camera by left-click and drag, zoom with mouse wheel
 - **Create New Sphere**: Menu > Sphere > Create New Sphere to configure parameters
