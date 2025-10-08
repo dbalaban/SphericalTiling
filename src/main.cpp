@@ -14,13 +14,21 @@ using namespace spherical_tiling;
 void printUsage(const char* programName) {
     std::cout << "Usage: " << programName << " [OPTIONS]\n\n";
     std::cout << "Options:\n";
-    std::cout << "  --R <value>    Radius of the sphere (default: 1.0)\n";
-    std::cout << "  --q <value>    Goldberg Class-I frequency (default: 3)\n";
-    std::cout << "                 Number of dual-cells given by N=10*q^2+2\n";
-    std::cout << "  --no-opt       Skip optimization step\n";
-    std::cout << "  --help         Display this help message\n";
+    std::cout << "  --R <value>      Radius of the sphere (default: 1.0)\n";
+    std::cout << "  --q <value>      Goldberg Class-I frequency (default: 3)\n";
+    std::cout << "                   Number of dual-cells given by N=10*q^2+2\n";
+    std::cout << "  --weight <func>  Weight function for optimization (default: f1)\n";
+    std::cout << "                   f1: 2*|lat|/π (angles at poles)\n";
+    std::cout << "                   f2: 1-f1 (area at poles)\n";
+    std::cout << "                   f3: cos²(lat) (area at poles)\n";
+    std::cout << "                   f4: sin²(lat) (angles at poles)\n";
+    std::cout << "                   f5: 1 (pure area)\n";
+    std::cout << "                   f6: 0 (pure angle)\n";
+    std::cout << "  --max-iter <n>   Maximum optimization iterations (default: 100)\n";
+    std::cout << "  --no-opt         Skip optimization step\n";
+    std::cout << "  --help           Display this help message\n";
     std::cout << "\nExample:\n";
-    std::cout << "  " << programName << " --R 2.5 --q 4\n";
+    std::cout << "  " << programName << " --R 2.5 --q 4 --weight f3\n";
     std::cout << "  " << programName << " --q 5 --no-opt\n";
 }
 
@@ -272,6 +280,8 @@ int main(int argc, char** argv) {
     double radius = 1.0;
     int frequency = 3; // Subdivision frequency (q in Goldberg Class-I)
     bool runOptimization = true;
+    WeightFunction weightFunc = WeightFunction::F1;
+    int maxIterations = 100;
     
     // Parse command-line arguments
     for (int i = 1; i < argc; ++i) {
@@ -304,6 +314,36 @@ int main(int argc, char** argv) {
                 printUsage(argv[0]);
                 return 1;
             }
+        } else if (arg == "--weight") {
+            if (i + 1 < argc) {
+                std::string wf = argv[++i];
+                if (wf == "f1") weightFunc = WeightFunction::F1;
+                else if (wf == "f2") weightFunc = WeightFunction::F2;
+                else if (wf == "f3") weightFunc = WeightFunction::F3;
+                else if (wf == "f4") weightFunc = WeightFunction::F4;
+                else if (wf == "f5") weightFunc = WeightFunction::F5;
+                else if (wf == "f6") weightFunc = WeightFunction::F6;
+                else {
+                    std::cerr << "Error: Unknown weight function '" << wf << "'\n";
+                    return 1;
+                }
+            } else {
+                std::cerr << "Error: --weight requires a value\n";
+                printUsage(argv[0]);
+                return 1;
+            }
+        } else if (arg == "--max-iter") {
+            if (i + 1 < argc) {
+                maxIterations = std::atoi(argv[++i]);
+                if (maxIterations < 1) {
+                    std::cerr << "Error: Max iterations must be at least 1\n";
+                    return 1;
+                }
+            } else {
+                std::cerr << "Error: --max-iter requires a value\n";
+                printUsage(argv[0]);
+                return 1;
+            }
         } else if (arg == "--no-opt") {
             runOptimization = false;
         } else {
@@ -321,6 +361,11 @@ int main(int argc, char** argv) {
     std::cout << "  Goldberg frequency (q): " << frequency << "\n";
     std::cout << "  Expected dual cells: " << expectedDualCells << "\n";
     std::cout << "  Optimization: " << (runOptimization ? "enabled" : "disabled") << "\n";
+    if (runOptimization) {
+        const char* wfName[] = {"f1", "f2", "f3", "f4", "f5", "f6"};
+        std::cout << "  Weight function: " << wfName[static_cast<int>(weightFunc)] << "\n";
+        std::cout << "  Max iterations: " << maxIterations << "\n";
+    }
     
     // Step 1: Generate icosahedron
     std::cout << "\n[1/5] Generating icosahedron...\n";
@@ -350,7 +395,11 @@ int main(int argc, char** argv) {
     // Step 5: Optimize with Ceres (if enabled)
     if (runOptimization) {
         std::cout << "\n[5/5] Running spatially-weighted optimization...\n";
-        optimizeTileGraph(graph, radius);
+        optimizeTileGraph(graph, radius, weightFunc, maxIterations);
+        
+        // Recompute dual cells after optimization
+        std::cout << "  Recomputing dual cells after optimization...\n";
+        constructDualCells(graph, radius);
         std::cout << "  Optimization complete\n";
     } else {
         std::cout << "\n[5/5] Skipping optimization (--no-opt specified)\n";

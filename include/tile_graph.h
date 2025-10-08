@@ -11,6 +11,10 @@ struct Node {
     Eigen::Vector3d center;
     std::vector<int> neighbors;
     
+    // Parametrization (latitude, longitude) for optimization
+    double latitude;   // radians: -π/2 to π/2
+    double longitude;  // radians: -π to π
+    
     // Per-node properties
     double energy;               // e
     double angle_defect;         // Angular defect from 2π

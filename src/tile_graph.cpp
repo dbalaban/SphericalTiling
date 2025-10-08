@@ -19,6 +19,16 @@ void TileGraph::buildFromTriangulation(
     for (size_t i = 0; i < vertices.size(); ++i) {
         nodes_[i].id = i;
         nodes_[i].center = vertices[i];
+        
+        // Initialize latitude-longitude parametrization from center
+        double x = vertices[i].x();
+        double y = vertices[i].y();
+        double z = vertices[i].z();
+        double r = vertices[i].norm();
+        
+        nodes_[i].latitude = std::asin(z / r);  // -π/2 to π/2
+        nodes_[i].longitude = std::atan2(y, x);  // -π to π
+        
         nodes_[i].energy = 0.0;
         nodes_[i].angle_defect = 0.0;
         nodes_[i].area = 0.0;
