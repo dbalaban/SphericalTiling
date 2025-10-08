@@ -49,13 +49,13 @@ cmake --build .
 Run the demo with default parameters (frequency=3):
 
 ```bash
-./build/spherical_tiling_demo
+./bin/spherical_tiling_demo
 ```
 
 Specify a custom subdivision frequency:
 
 ```bash
-./build/spherical_tiling_demo 4
+./bin/spherical_tiling_demo --q 4
 ```
 
 The frequency parameter controls the fineness of the subdivision:
@@ -96,17 +96,32 @@ This helps create more uniform tilings that balance area and angle regularity ba
 SphericalTiling/
 ├── CMakeLists.txt
 ├── README.md
-├── include/
-│   ├── goldberg_subdivision.h
-│   ├── tile_graph.h
-│   ├── dual_construction.h
-│   └── optimization.h
+├── bin/                            # Compiled executables
+│   ├── spherical_tiling_demo
+│   └── spherical_tiling_benchmark
 └── src/
-    ├── goldberg_subdivision.cpp
-    ├── tile_graph.cpp
-    ├── dual_construction.cpp
-    ├── optimization.cpp
-    └── main.cpp
+    ├── app/                        # Application executables
+    │   ├── CMakeLists.txt
+    │   ├── main.cpp
+    │   └── benchmark.cpp
+    └── lib/                        # Project libraries
+        ├── geometric/              # Geometric library
+        │   ├── CMakeLists.txt
+        │   ├── include/
+        │   │   ├── goldberg_subdivision.h
+        │   │   ├── tile_graph.h
+        │   │   ├── dual_construction.h
+        │   │   └── templated_geometry.h
+        │   └── src/
+        │       ├── goldberg_subdivision.cpp
+        │       ├── tile_graph.cpp
+        │       └── dual_construction.cpp
+        └── optimization/           # Optimization library
+            ├── CMakeLists.txt
+            ├── include/
+            │   └── optimization.h
+            └── src/
+                └── optimization.cpp
 ```
 
 ## License
