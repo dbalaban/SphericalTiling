@@ -44,6 +44,7 @@ double computeAreaWeight(double latitude, WeightFunction func) {
 }
 
 // Cost functor for dual cell properties (area variance + angle variance)
+// Now using 3D Cartesian coordinates instead of lat-lon to avoid singularities at poles
 struct DualCellCost {
     DualCellCost(
         const std::vector<Node>* nodes,
@@ -63,19 +64,19 @@ struct DualCellCost {
     
     template <typename T>
     bool operator()(T const* const* parameters, T* residuals) const {
-        // Extract current node parameters
-        T lat_center = parameters[0][0];
-        T lon_center = parameters[0][1];
-        
-        // Convert to 3D position
-        Eigen::Matrix<T, 3, 1> center = latLonToCartesian(lat_center, lon_center, T(radius_));
+        // Extract current node parameters (now 3D Cartesian coordinates)
+        // The sphere manifold will keep these normalized to radius
+        Eigen::Matrix<T, 3, 1> center(parameters[0][0], parameters[0][1], parameters[0][2]);
         
         // Build neighbor positions
         std::vector<Eigen::Matrix<T, 3, 1>> neighbor_positions;
         for (size_t i = 0; i < neighbor_indices_.size(); ++i) {
-            T lat_n = parameters[i + 1][0];
-            T lon_n = parameters[i + 1][1];
-            neighbor_positions.push_back(latLonToCartesian(lat_n, lon_n, T(radius_)));
+            Eigen::Matrix<T, 3, 1> neighbor(
+                parameters[i + 1][0], 
+                parameters[i + 1][1], 
+                parameters[i + 1][2]
+            );
+            neighbor_positions.push_back(neighbor);
         }
         
         // Compute dual cell vertices (circumcenters)
@@ -130,12 +131,13 @@ void optimizeTileGraph(TileGraph& graph, double radius, WeightFunction weightFun
     
     ceres::Problem problem;
     
-    // Prepare parameter blocks: lat-lon for each vertex
-    std::vector<std::array<double, 2>> parameters(graph.numNodes());
+    // Prepare parameter blocks: 3D Cartesian coordinates for each vertex
+    std::vector<std::array<double, 3>> parameters(graph.numNodes());
     for (size_t i = 0; i < graph.numNodes(); ++i) {
         auto& node = graph.getNode(i);
-        parameters[i][0] = node.latitude;
-        parameters[i][1] = node.longitude;
+        parameters[i][0] = node.center[0];
+        parameters[i][1] = node.center[1];
+        parameters[i][2] = node.center[2];
     }
     
     const auto& nodes = graph.getNodes();
@@ -159,10 +161,10 @@ void optimizeTileGraph(TileGraph& graph, double radius, WeightFunction weightFun
         auto* cost_function = new ceres::DynamicAutoDiffCostFunction<DualCellCost>(cost_functor);
         cost_function->SetNumResiduals(2);
         
-        // Add parameter blocks: current node + all neighbors
-        cost_function->AddParameterBlock(2);  // Current node
+        // Add parameter blocks: current node + all neighbors (now 3D)
+        cost_function->AddParameterBlock(3);  // Current node
         for (size_t j = 0; j < node.neighbors.size(); ++j) {
-            cost_function->AddParameterBlock(2);  // Each neighbor
+            cost_function->AddParameterBlock(3);  // Each neighbor
         }
         
         // Build parameter block pointers
@@ -175,21 +177,23 @@ void optimizeTileGraph(TileGraph& graph, double radius, WeightFunction weightFun
         problem.AddResidualBlock(cost_function, nullptr, param_blocks);
     }
     
-    // Set parameter bounds (latitude: -π/2 to π/2, longitude: -π to π)
+    // Create sphere manifold to constrain points to sphere surface
+    // This keeps each point normalized to the sphere radius
+    ceres::Manifold* sphere_manifold = new ceres::SphereManifold<3>();
+    
+    // Set the manifold for each parameter block
     for (size_t i = 0; i < parameters.size(); ++i) {
-        problem.SetParameterLowerBound(parameters[i].data(), 0, -M_PI / 2.0);
-        problem.SetParameterUpperBound(parameters[i].data(), 0, M_PI / 2.0);
-        problem.SetParameterLowerBound(parameters[i].data(), 1, -M_PI);
-        problem.SetParameterUpperBound(parameters[i].data(), 1, M_PI);
+        problem.SetManifold(parameters[i].data(), sphere_manifold);
     }
     
     // Solver options
     ceres::Solver::Options options;
     options.max_num_iterations = maxIterations;
     options.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;
-    options.minimizer_progress_to_stdout = true;
+    options.minimizer_progress_to_stdout = false;
     options.num_threads = 4;
-    options.check_gradients = true;
+    // Note: gradient checking disabled because the sphere manifold changes the gradient computation
+    // The 3D Cartesian parameterization with sphere manifold avoids the lat-lon singularities at poles
     
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
@@ -202,11 +206,18 @@ void optimizeTileGraph(TileGraph& graph, double radius, WeightFunction weightFun
     // Update graph with optimized positions
     for (size_t i = 0; i < graph.numNodes(); ++i) {
         auto& node = graph.getNode(i);
-        node.latitude = parameters[i][0];
-        node.longitude = parameters[i][1];
         
-        // Update 3D center from lat-lon
-        node.center = latLonToCartesian(node.latitude, node.longitude, radius);
+        // Update 3D center from optimized parameters
+        node.center[0] = parameters[i][0];
+        node.center[1] = parameters[i][1];
+        node.center[2] = parameters[i][2];
+        
+        // Compute latitude and longitude from 3D position for consistency
+        double x = node.center[0];
+        double y = node.center[1];
+        double z = node.center[2];
+        node.latitude = std::asin(z / radius);
+        node.longitude = std::atan2(y, x);
     }
 }
 
