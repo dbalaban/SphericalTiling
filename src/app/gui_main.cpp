@@ -113,7 +113,7 @@ struct AppState {
 
 // Camera and rendering
 Camera camera;
-MeshRenderer renderer;
+MeshRenderer* renderer = nullptr; // Delayed initialization after OpenGL setup
 AppState appState;
 
 // Mouse state for camera control
@@ -150,10 +150,10 @@ void buildSphere() {
         
         // Update renderer
         // Primal mesh now shows the adjacency graph (TileGraph edges) in red
-        renderer.setPrimalMesh(*appState.graph, appState.radius);
-        renderer.setDualMesh(*appState.graph, appState.radius);
+        renderer->setPrimalMesh(*appState.graph, appState.radius);
+        renderer->setDualMesh(*appState.graph, appState.radius);
         // Triangular mesh shows the subdivision face edges in green
-        renderer.setTriangleMesh(appState.primalVertices, appState.primalFaces);
+        renderer->setTriangleMesh(appState.primalVertices, appState.primalFaces);
         
         appState.needsRebuild = false;
         
@@ -410,6 +410,11 @@ int main() {
         glEnable(GL_DEPTH_TEST);
         glLineWidth(2.0f);
         
+        // Initialize renderer after OpenGL is ready
+        std::cerr << "Initializing MeshRenderer..." << std::endl;
+        renderer = new MeshRenderer();
+        std::cerr << "MeshRenderer initialized successfully" << std::endl;
+        
         // Build initial sphere
         buildSphere();
         
@@ -440,15 +445,15 @@ int main() {
                 Eigen::Matrix4f viewProj = camera.getProjectionMatrix() * camera.getViewMatrix();
                 
                 if (appState.showPrimal) {
-                    renderer.renderPrimal(viewProj, Eigen::Vector3f(1.0f, 0.0f, 0.0f)); // Red
+                    renderer->renderPrimal(viewProj, Eigen::Vector3f(1.0f, 0.0f, 0.0f)); // Red
                 }
                 
                 if (appState.showDual) {
-                    renderer.renderDual(viewProj, Eigen::Vector3f(0.0f, 0.0f, 0.0f)); // Black
+                    renderer->renderDual(viewProj, Eigen::Vector3f(0.0f, 0.0f, 0.0f)); // Black
                 }
                 
                 if (appState.showTriangles) {
-                    renderer.renderTriangles(viewProj, Eigen::Vector3f(0.0f, 1.0f, 0.0f)); // Green
+                    renderer->renderTriangles(viewProj, Eigen::Vector3f(0.0f, 1.0f, 0.0f)); // Green
                 }
                 
                 // Render UI
@@ -474,6 +479,11 @@ int main() {
         }
         
         // Cleanup
+        if (renderer) {
+            delete renderer;
+            renderer = nullptr;
+        }
+        
         ImGui_ImplOpenGL3_Shutdown();
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
@@ -485,11 +495,19 @@ int main() {
     } catch (const std::exception& e) {
         std::cerr << "FATAL ERROR in main(): " << e.what() << std::endl;
         printStackTrace();
+        if (renderer) {
+            delete renderer;
+            renderer = nullptr;
+        }
         glfwTerminate();
         return -1;
     } catch (...) {
         std::cerr << "UNKNOWN FATAL ERROR in main()" << std::endl;
         printStackTrace();
+        if (renderer) {
+            delete renderer;
+            renderer = nullptr;
+        }
         glfwTerminate();
         return -1;
     }

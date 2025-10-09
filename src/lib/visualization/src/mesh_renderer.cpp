@@ -1,6 +1,7 @@
 #include "mesh_renderer.h"
 #include <iostream>
 #include <cmath>
+#include <stdexcept>
 
 namespace spherical_tiling {
 
@@ -50,8 +51,19 @@ MeshRenderer::~MeshRenderer() {
 }
 
 void MeshRenderer::setupShaders() {
+    // Check that OpenGL is initialized
+    if (!glCreateShader) {
+        std::cerr << "ERROR: OpenGL not initialized! glCreateShader function pointer is null." << std::endl;
+        std::cerr << "Make sure GLAD is initialized before creating MeshRenderer." << std::endl;
+        throw std::runtime_error("OpenGL not initialized");
+    }
+    
     // Compile vertex shader
     GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
+    if (vertexShader == 0) {
+        std::cerr << "ERROR: Failed to create vertex shader" << std::endl;
+        throw std::runtime_error("Failed to create vertex shader");
+    }
     glShaderSource(vertexShader, 1, &vertexShaderSource, nullptr);
     glCompileShader(vertexShader);
     
