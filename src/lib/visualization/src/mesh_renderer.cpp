@@ -169,21 +169,65 @@ void MeshRenderer::setDualMesh(const TileGraph& graph, double radius) {
     dualIndices_.clear();
     
     const auto& nodes = graph.getNodes();
-    const auto& edges = graph.getEdges();
     
-    // Add all node positions as vertices
-    dualVertices_.reserve(nodes.size() * 3);
-    for (const auto& node : nodes) {
-        dualVertices_.push_back(static_cast<float>(node.center.x()));
-        dualVertices_.push_back(static_cast<float>(node.center.y()));
-        dualVertices_.push_back(static_cast<float>(node.center.z()));
-    }
+    // For dual mesh, we need to show the boundaries of the dual cells (Voronoi regions)
+    // Each dual cell is a polygon formed by circumcenters of triangles
+    // We compute these circumcenters and connect them in order
     
-    // Add all edges as line segments
-    dualIndices_.reserve(edges.size() * 2);
-    for (const auto& edge : edges) {
-        dualIndices_.push_back(edge.node1);
-        dualIndices_.push_back(edge.node2);
+    int vertexOffset = 0;
+    
+    for (size_t nodeIdx = 0; nodeIdx < nodes.size(); ++nodeIdx) {
+        const auto& node = nodes[nodeIdx];
+        const auto& neighbors = node.neighbors;
+        
+        if (neighbors.size() < 3) {
+            continue; // Skip degenerate nodes
+        }
+        
+        std::vector<Eigen::Vector3d> dualVertices;
+        
+        // For each pair of consecutive neighbors, compute circumcenter
+        // This forms the vertices of the dual cell (pentagon or hexagon)
+        for (size_t i = 0; i < neighbors.size(); ++i) {
+            int n1 = neighbors[i];
+            int n2 = neighbors[(i + 1) % neighbors.size()];
+            
+            // Compute circumcenter of triangle (node, neighbor1, neighbor2)
+            const Eigen::Vector3d& p1 = node.center;
+            const Eigen::Vector3d& p2 = nodes[n1].center;
+            const Eigen::Vector3d& p3 = nodes[n2].center;
+            
+            // Get normals to the great circle arcs
+            Eigen::Vector3d normal1 = p1.cross(p2).normalized();
+            Eigen::Vector3d normal2 = p2.cross(p3).normalized();
+            
+            // The circumcenter is perpendicular to both normals
+            Eigen::Vector3d center = normal1.cross(normal2).normalized();
+            
+            // Check which direction to use (should be on the same side as the triangle)
+            Eigen::Vector3d midpoint = (p1 + p2 + p3).normalized();
+            if (center.dot(midpoint) < 0) {
+                center = -center;
+            }
+            
+            Eigen::Vector3d circumcenter = center * radius;
+            dualVertices.push_back(circumcenter);
+        }
+        
+        // Add vertices to the global vertex buffer
+        int startIdx = vertexOffset;
+        for (const auto& v : dualVertices) {
+            dualVertices_.push_back(static_cast<float>(v.x()));
+            dualVertices_.push_back(static_cast<float>(v.y()));
+            dualVertices_.push_back(static_cast<float>(v.z()));
+            vertexOffset++;
+        }
+        
+        // Add edges connecting consecutive vertices to form the dual cell boundary
+        for (size_t i = 0; i < dualVertices.size(); ++i) {
+            dualIndices_.push_back(startIdx + i);
+            dualIndices_.push_back(startIdx + (i + 1) % dualVertices.size());
+        }
     }
     
     hasDualMesh_ = true;
