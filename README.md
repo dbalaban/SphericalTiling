@@ -142,8 +142,13 @@ Features:
   - Q-frequency (1-8): Controls mesh subdivision density
   - Optimization toggle: Enable/disable vertex optimization
   - Weight functions: Choose optimization strategy (f1-f6)
-- **Display Options**: Toggle visibility of primal mesh (red) and dual mesh (black)
+- **Display Options**: Toggle visibility of three mesh types
+  - Primal mesh (red): Adjacency graph of dual cells
+  - Dual mesh (black): Boundaries of pentagon/hexagon dual cells
+  - Triangle mesh (green): Underlying triangular subdivision
 - **Statistics**: View real-time mesh and sphere statistics
+
+For detailed information about the mesh visualization options, see [MESH_OPTIONS_EXPLANATION.md](MESH_OPTIONS_EXPLANATION.md).
 
 ## Algorithm Details
 
