@@ -2,6 +2,10 @@
 #include <iostream>
 #include <cmath>
 #include <stdexcept>
+#include <map>
+#include <tuple>
+#include <algorithm>
+#include <vector>
 
 namespace spherical_tiling {
 
@@ -169,30 +173,65 @@ void MeshRenderer::setDualMesh(const TileGraph& graph, double radius) {
     dualIndices_.clear();
     
     const auto& nodes = graph.getNodes();
+    const auto& edges = graph.getEdges();
     
-    // For dual mesh, we need to show the boundaries of the dual cells (Voronoi regions)
-    // Each dual cell is a polygon formed by circumcenters of triangles
-    // We compute these circumcenters and connect them in order
+    // CORRECTED IMPLEMENTATION:
+    // The dual mesh shows the boundaries between dual cells (Voronoi regions).
+    // 
+    // Key insight: In the primal-dual relationship:
+    // - Each primal edge (connecting two vertices) corresponds to a dual edge
+    // - The dual edge connects the circumcenters of the two triangles sharing that primal edge
+    // - This creates the correct Voronoi diagram boundaries
+    //
+    // Previous implementation was incorrect: it was creating separate vertex sets for each
+    // dual cell and connecting consecutive circumcenters in a loop, which created duplicate
+    // edges and didn't properly represent the global dual structure.
     
-    int vertexOffset = 0;
+    // Helper lambda to find or add a vertex
+    auto getOrAddVertex = [this](const Eigen::Vector3d& v, std::vector<Eigen::Vector3d>& uniqueVertices) -> int {
+        const double tolerance = 1e-9;
+        for (size_t i = 0; i < uniqueVertices.size(); ++i) {
+            if ((uniqueVertices[i] - v).norm() < tolerance) {
+                return static_cast<int>(i);
+            }
+        }
+        uniqueVertices.push_back(v);
+        dualVertices_.push_back(static_cast<float>(v.x()));
+        dualVertices_.push_back(static_cast<float>(v.y()));
+        dualVertices_.push_back(static_cast<float>(v.z()));
+        return static_cast<int>(uniqueVertices.size() - 1);
+    };
+    
+    std::vector<Eigen::Vector3d> uniqueVertices;
+    
+    // First, compute all triangle circumcenters
+    // Store them indexed by sorted triangle vertex triple
+    std::map<std::tuple<int, int, int>, Eigen::Vector3d> triangleCircumcenters;
     
     for (size_t nodeIdx = 0; nodeIdx < nodes.size(); ++nodeIdx) {
         const auto& node = nodes[nodeIdx];
         const auto& neighbors = node.neighbors;
         
         if (neighbors.size() < 3) {
-            continue; // Skip degenerate nodes
+            continue;
         }
         
-        std::vector<Eigen::Vector3d> dualVertices;
-        
-        // For each pair of consecutive neighbors, compute circumcenter
-        // This forms the vertices of the dual cell (pentagon or hexagon)
+        // Each pair of consecutive neighbors forms a triangle with this node
         for (size_t i = 0; i < neighbors.size(); ++i) {
             int n1 = neighbors[i];
             int n2 = neighbors[(i + 1) % neighbors.size()];
             
-            // Compute circumcenter of triangle (node, neighbor1, neighbor2)
+            // Create a sorted triangle key
+            std::vector<int> tri = {(int)nodeIdx, n1, n2};
+            std::sort(tri.begin(), tri.end());
+            auto triKey = std::make_tuple(tri[0], tri[1], tri[2]);
+            
+            // Skip if we've already computed this triangle's circumcenter
+            if (triangleCircumcenters.find(triKey) != triangleCircumcenters.end()) {
+                continue;
+            }
+            
+            // Compute circumcenter of this triangle
             const Eigen::Vector3d& p1 = node.center;
             const Eigen::Vector3d& p2 = nodes[n1].center;
             const Eigen::Vector3d& p3 = nodes[n2].center;
@@ -211,22 +250,44 @@ void MeshRenderer::setDualMesh(const TileGraph& graph, double radius) {
             }
             
             Eigen::Vector3d circumcenter = center * radius;
-            dualVertices.push_back(circumcenter);
+            triangleCircumcenters[triKey] = circumcenter;
+        }
+    }
+    
+    // Now, for each primal edge, find the two triangles that share it
+    // and create a dual edge connecting their circumcenters
+    for (const auto& edge : edges) {
+        int v1 = edge.node1;
+        int v2 = edge.node2;
+        
+        // Find triangles that contain this edge
+        std::vector<std::tuple<int, int, int>> matchingTriangles;
+        for (const auto& [tri, cc] : triangleCircumcenters) {
+            int t0 = std::get<0>(tri);
+            int t1 = std::get<1>(tri);
+            int t2 = std::get<2>(tri);
+            
+            // Check if this triangle contains both v1 and v2
+            int count = 0;
+            if (t0 == v1 || t0 == v2) count++;
+            if (t1 == v1 || t1 == v2) count++;
+            if (t2 == v1 || t2 == v2) count++;
+            
+            if (count == 2) {
+                matchingTriangles.push_back(tri);
+            }
         }
         
-        // Add vertices to the global vertex buffer
-        int startIdx = vertexOffset;
-        for (const auto& v : dualVertices) {
-            dualVertices_.push_back(static_cast<float>(v.x()));
-            dualVertices_.push_back(static_cast<float>(v.y()));
-            dualVertices_.push_back(static_cast<float>(v.z()));
-            vertexOffset++;
-        }
-        
-        // Add edges connecting consecutive vertices to form the dual cell boundary
-        for (size_t i = 0; i < dualVertices.size(); ++i) {
-            dualIndices_.push_back(startIdx + i);
-            dualIndices_.push_back(startIdx + (i + 1) % dualVertices.size());
+        // There should be exactly 2 triangles sharing this edge (for a closed mesh)
+        if (matchingTriangles.size() == 2) {
+            const Eigen::Vector3d& cc1 = triangleCircumcenters[matchingTriangles[0]];
+            const Eigen::Vector3d& cc2 = triangleCircumcenters[matchingTriangles[1]];
+            
+            int idx1 = getOrAddVertex(cc1, uniqueVertices);
+            int idx2 = getOrAddVertex(cc2, uniqueVertices);
+            
+            dualIndices_.push_back(idx1);
+            dualIndices_.push_back(idx2);
         }
     }
     
