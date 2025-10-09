@@ -169,21 +169,48 @@ void MeshRenderer::setDualMesh(const TileGraph& graph, double radius) {
     dualIndices_.clear();
     
     const auto& nodes = graph.getNodes();
-    const auto& edges = graph.getEdges();
     
-    // Add all node positions as vertices
-    dualVertices_.reserve(nodes.size() * 3);
-    for (const auto& node : nodes) {
-        dualVertices_.push_back(static_cast<float>(node.center.x()));
-        dualVertices_.push_back(static_cast<float>(node.center.y()));
-        dualVertices_.push_back(static_cast<float>(node.center.z()));
-    }
-    
-    // Add all edges as line segments
-    dualIndices_.reserve(edges.size() * 2);
-    for (const auto& edge : edges) {
-        dualIndices_.push_back(edge.node1);
-        dualIndices_.push_back(edge.node2);
+    // For each node, compute the dual cell vertices (circumcenters) 
+    // and create edges connecting consecutive circumcenters to form hexagon/pentagon boundaries
+    for (size_t nodeIdx = 0; nodeIdx < nodes.size(); ++nodeIdx) {
+        const auto& node = nodes[nodeIdx];
+        const auto& neighbors = node.neighbors;
+        
+        if (neighbors.size() < 3) {
+            continue;
+        }
+        
+        // Compute circumcenters for this node's dual cell
+        std::vector<Eigen::Vector3d> cellVertices;
+        for (size_t i = 0; i < neighbors.size(); ++i) {
+            int n1 = neighbors[i];
+            int n2 = neighbors[(i + 1) % neighbors.size()];
+            
+            // Compute circumcenter of triangle formed by node and two consecutive neighbors
+            Eigen::Vector3d p1 = node.center;
+            Eigen::Vector3d p2 = nodes[n1].center;
+            Eigen::Vector3d p3 = nodes[n2].center;
+            
+            // Compute spherical circumcenter
+            Eigen::Vector3d n = (p1.cross(p2) + p2.cross(p3) + p3.cross(p1)).normalized();
+            Eigen::Vector3d circumcenter = n * radius;
+            
+            cellVertices.push_back(circumcenter);
+        }
+        
+        // Add vertices and edges for this dual cell
+        int baseIndex = dualVertices_.size() / 3;
+        for (const auto& v : cellVertices) {
+            dualVertices_.push_back(static_cast<float>(v.x()));
+            dualVertices_.push_back(static_cast<float>(v.y()));
+            dualVertices_.push_back(static_cast<float>(v.z()));
+        }
+        
+        // Connect consecutive circumcenters to form the dual cell boundary
+        for (size_t i = 0; i < cellVertices.size(); ++i) {
+            dualIndices_.push_back(baseIndex + i);
+            dualIndices_.push_back(baseIndex + (i + 1) % cellVertices.size());
+        }
     }
     
     hasDualMesh_ = true;
