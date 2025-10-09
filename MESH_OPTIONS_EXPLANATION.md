@@ -44,6 +44,8 @@ This shows the underlying triangular mesh that results from the Goldberg subdivi
 - Color: Green
 - Data source: `subdivision.vertices` and `subdivision.faces`
 
+**Note**: This is fundamentally different from the dual mesh. The triangular mesh has many more, smaller triangles, while the dual mesh has fewer, larger polygons (pentagons and hexagons). Before the fix, "Show Dual" was incorrectly showing the same edges as "Show Primal" instead of the dual cell boundaries.
+
 ## Visual Comparison
 
 When all three options are enabled:
@@ -53,13 +55,33 @@ When all three options are enabled:
 
 The dual cell boundaries (black) should form closed pentagons and hexagons, while the primal graph (red) shows how these cells are connected to each other.
 
+## Answer to Issue Question: "How/why is Show Triangle different from Show Dual?"
+
+**Show Triangles** and **Show Dual** display completely different geometric structures:
+
+### Show Triangles (Green)
+- **What**: Edges of small triangles from Goldberg subdivision
+- **Count**: For frequency=2, there are 80 triangular faces
+- **Size**: Many small triangles uniformly distributed
+- **Purpose**: Shows the base tessellation used to construct dual cells
+
+### Show Dual (Black)
+- **What**: Edges of large pentagons and hexagons (dual cells)
+- **Count**: For frequency=2, there are 42 dual cells (12 pentagons + 30 hexagons)
+- **Size**: Fewer, larger polygons
+- **Purpose**: Shows the actual Goldberg polyhedron structure
+
+**Key difference**: Triangles are the primal tessellation (many small faces), while dual cells are the Voronoi regions around primal vertices (fewer large faces). Each dual cell contains multiple triangles from the primal tessellation.
+
+**Before the fix**, "Show Dual" was incorrectly showing TileGraph edges (same as Primal), which is why it looked like triangles - but those were not the actual triangle edges either, they were the adjacency graph edges.
+
 ## Fix Applied
 
 The bug was that both "Show Primal" and "Show Dual" were displaying the same thing (TileGraph edges). The fix modified `MeshRenderer::setDualMesh()` to correctly compute and display the dual cell boundaries instead of reusing the TileGraph edges.
 
 ### Before the fix:
-- Show Primal: TileGraph edges ❌
-- Show Dual: TileGraph edges (same as Primal) ❌
+- Show Primal: TileGraph edges ❌ (but correct visualization)
+- Show Dual: TileGraph edges (same as Primal) ❌ (incorrect - should show dual cell boundaries)
 - Show Triangles: Triangle edges ✓
 
 ### After the fix:
