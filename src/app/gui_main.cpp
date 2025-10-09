@@ -16,6 +16,9 @@
 #include <stdexcept>
 #include <exception>
 #include <csignal>
+#include <cstdlib>
+#include <cstdio>
+#include <unistd.h>
 
 #ifdef __GNUC__
 #include <execinfo.h>
@@ -29,9 +32,17 @@ using namespace spherical_tiling;
 void printStackTrace() {
 #ifdef __GNUC__
     std::cerr << "\n=== Stack Trace ===" << std::endl;
+    std::cerr.flush();
+    
     void* array[50];
     int size = backtrace(array, 50);
     char** messages = backtrace_symbols(array, size);
+    
+    if (messages == nullptr) {
+        std::cerr << "Failed to get backtrace symbols" << std::endl;
+        std::cerr.flush();
+        return;
+    }
     
     for (int i = 0; i < size; ++i) {
         Dl_info info;
@@ -47,20 +58,34 @@ void printStackTrace() {
         } else {
             std::cerr << "  [" << i << "] " << messages[i] << std::endl;
         }
+        std::cerr.flush();
     }
     std::cerr << "===================" << std::endl;
+    std::cerr.flush();
     free(messages);
 #else
     std::cerr << "Stack trace not available on this platform" << std::endl;
+    std::cerr.flush();
 #endif
 }
 
 // Signal handler for segmentation faults
 void signalHandler(int signal) {
+    // Flush all output buffers immediately
+    std::cerr.flush();
+    std::cout.flush();
+    
     std::cerr << "\n!!! SEGMENTATION FAULT DETECTED !!!" << std::endl;
-    std::cerr << "Signal: " << signal << std::endl;
+    std::cerr << "Signal: " << signal << " (SIGSEGV)" << std::endl;
+    std::cerr << "This indicates a memory access violation." << std::endl;
+    
     printStackTrace();
-    std::exit(signal);
+    
+    // Flush again before exiting
+    std::cerr.flush();
+    
+    // Use _exit() instead of exit() to bypass cleanup that might cause issues
+    _exit(signal);
 }
 
 // Application state
@@ -147,6 +172,7 @@ void buildSphere() {
 }
 
 void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
+    (void)mods; // Unused parameter
     if (button == GLFW_MOUSE_BUTTON_LEFT) {
         if (action == GLFW_PRESS) {
             // Check if ImGui wants to capture the mouse
@@ -162,6 +188,7 @@ void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
 }
 
 void cursorPosCallback(GLFWwindow* window, double xpos, double ypos) {
+    (void)window; // Unused parameter
     if (mousePressed) {
         double deltaX = xpos - lastMouseX;
         double deltaY = ypos - lastMouseY;
@@ -174,6 +201,8 @@ void cursorPosCallback(GLFWwindow* window, double xpos, double ypos) {
 }
 
 void scrollCallback(GLFWwindow* window, double xoffset, double yoffset) {
+    (void)window;  // Unused parameter
+    (void)xoffset; // Unused parameter
     ImGuiIO& io = ImGui::GetIO();
     if (!io.WantCaptureMouse) {
         camera.zoom(-yoffset * 0.3f);
@@ -295,8 +324,15 @@ void renderUI() {
 }
 
 int main() {
-    // Install signal handler for segmentation faults
+    // Install signal handlers for crashes
     std::signal(SIGSEGV, signalHandler);
+    std::signal(SIGABRT, signalHandler);
+    
+    // Set stderr to unbuffered for immediate crash report output
+    std::setvbuf(stderr, nullptr, _IONBF, 0);
+    
+    std::cerr << "Spherical Tiling GUI starting..." << std::endl;
+    std::cerr << "Signal handlers installed (SIGSEGV, SIGABRT)" << std::endl;
     
     try {
         // Initialize GLFW
