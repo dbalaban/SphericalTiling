@@ -22,18 +22,25 @@ public:
     // Set mesh data for dual (Voronoi) mesh from TileGraph
     void setDualMesh(const TileGraph& graph, double radius);
     
+    // Set mesh data for triangle mesh (subdivision face edges)
+    void setTriangleMesh(const std::vector<Eigen::Vector3d>& vertices,
+                         const std::vector<Eigen::Vector3i>& faces);
+    
     // Render meshes
     void renderPrimal(const Eigen::Matrix4f& viewProj, const Eigen::Vector3f& color);
     void renderDual(const Eigen::Matrix4f& viewProj, const Eigen::Vector3f& color);
+    void renderTriangles(const Eigen::Matrix4f& viewProj, const Eigen::Vector3f& color);
     
     // Clear mesh data
     void clearPrimal();
     void clearDual();
+    void clearTriangles();
     
 private:
     void setupShaders();
     void setupPrimalBuffers();
     void setupDualBuffers();
+    void setupTriangleBuffers();
     
     // Shader program
     GLuint shaderProgram_;
@@ -55,6 +62,14 @@ private:
     GLuint dualVBO_;
     GLuint dualEBO_;
     bool hasDualMesh_;
+    
+    // Triangle mesh data (edges only)
+    std::vector<float> triangleVertices_;
+    std::vector<unsigned int> triangleIndices_;
+    GLuint triangleVAO_;
+    GLuint triangleVBO_;
+    GLuint triangleEBO_;
+    bool hasTriangleMesh_;
 };
 
 } // namespace spherical_tiling

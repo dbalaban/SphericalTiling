@@ -32,6 +32,7 @@ struct AppState {
     // Display options
     bool showPrimal = true;
     bool showDual = true;
+    bool showTriangles = false;
     
     // UI state
     bool showCreateDialog = false;
@@ -78,6 +79,8 @@ void buildSphere() {
     // Primal mesh now shows the adjacency graph (TileGraph edges) in red
     renderer.setPrimalMesh(*appState.graph, appState.radius);
     renderer.setDualMesh(*appState.graph, appState.radius);
+    // Triangular mesh shows the subdivision face edges in green
+    renderer.setTriangleMesh(appState.primalVertices, appState.primalFaces);
     
     appState.needsRebuild = false;
     
@@ -148,6 +151,7 @@ void renderUI() {
     ImGui::Text("Mesh Visibility:");
     ImGui::Checkbox("Show Primal (Red)", &appState.showPrimal);
     ImGui::Checkbox("Show Dual (Black)", &appState.showDual);
+    ImGui::Checkbox("Show Triangles (Green)", &appState.showTriangles);
     
     ImGui::Separator();
     ImGui::Text("Camera:");
@@ -320,6 +324,10 @@ int main() {
         
         if (appState.showDual) {
             renderer.renderDual(viewProj, Eigen::Vector3f(0.0f, 0.0f, 0.0f)); // Black
+        }
+        
+        if (appState.showTriangles) {
+            renderer.renderTriangles(viewProj, Eigen::Vector3f(0.0f, 1.0f, 0.0f)); // Green
         }
         
         // Render UI

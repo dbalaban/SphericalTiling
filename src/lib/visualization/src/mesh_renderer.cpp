@@ -31,7 +31,8 @@ void main() {
 MeshRenderer::MeshRenderer() 
     : shaderProgram_(0), mvpLocation_(-1), colorLocation_(-1),
       primalVAO_(0), primalVBO_(0), primalEBO_(0), hasPrimalMesh_(false),
-      dualVAO_(0), dualVBO_(0), dualEBO_(0), hasDualMesh_(false) {
+      dualVAO_(0), dualVBO_(0), dualEBO_(0), hasDualMesh_(false),
+      triangleVAO_(0), triangleVBO_(0), triangleEBO_(0), hasTriangleMesh_(false) {
     setupShaders();
 }
 
@@ -42,6 +43,9 @@ MeshRenderer::~MeshRenderer() {
     if (dualVAO_) glDeleteVertexArrays(1, &dualVAO_);
     if (dualVBO_) glDeleteBuffers(1, &dualVBO_);
     if (dualEBO_) glDeleteBuffers(1, &dualEBO_);
+    if (triangleVAO_) glDeleteVertexArrays(1, &triangleVAO_);
+    if (triangleVBO_) glDeleteBuffers(1, &triangleVBO_);
+    if (triangleEBO_) glDeleteBuffers(1, &triangleEBO_);
     if (shaderProgram_) glDeleteProgram(shaderProgram_);
 }
 
@@ -254,6 +258,75 @@ void MeshRenderer::clearDual() {
     hasDualMesh_ = false;
     dualVertices_.clear();
     dualIndices_.clear();
+}
+
+void MeshRenderer::setTriangleMesh(const std::vector<Eigen::Vector3d>& vertices,
+                                    const std::vector<Eigen::Vector3i>& faces) {
+    // Convert vertices to float array
+    triangleVertices_.clear();
+    triangleVertices_.reserve(vertices.size() * 3);
+    for (const auto& v : vertices) {
+        triangleVertices_.push_back(static_cast<float>(v.x()));
+        triangleVertices_.push_back(static_cast<float>(v.y()));
+        triangleVertices_.push_back(static_cast<float>(v.z()));
+    }
+    
+    // Convert face indices to line segments (edges)
+    triangleIndices_.clear();
+    triangleIndices_.reserve(faces.size() * 6);
+    for (const auto& face : faces) {
+        // Three edges per triangle
+        triangleIndices_.push_back(face[0]);
+        triangleIndices_.push_back(face[1]);
+        triangleIndices_.push_back(face[1]);
+        triangleIndices_.push_back(face[2]);
+        triangleIndices_.push_back(face[2]);
+        triangleIndices_.push_back(face[0]);
+    }
+    
+    hasTriangleMesh_ = true;
+    setupTriangleBuffers();
+}
+
+void MeshRenderer::setupTriangleBuffers() {
+    if (!triangleVAO_) {
+        glGenVertexArrays(1, &triangleVAO_);
+        glGenBuffers(1, &triangleVBO_);
+        glGenBuffers(1, &triangleEBO_);
+    }
+    
+    glBindVertexArray(triangleVAO_);
+    
+    glBindBuffer(GL_ARRAY_BUFFER, triangleVBO_);
+    glBufferData(GL_ARRAY_BUFFER, triangleVertices_.size() * sizeof(float),
+                 triangleVertices_.data(), GL_STATIC_DRAW);
+    
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, triangleEBO_);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, triangleIndices_.size() * sizeof(unsigned int),
+                 triangleIndices_.data(), GL_STATIC_DRAW);
+    
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    
+    glBindVertexArray(0);
+}
+
+void MeshRenderer::renderTriangles(const Eigen::Matrix4f& viewProj, const Eigen::Vector3f& color) {
+    if (!hasTriangleMesh_) return;
+    
+    glUseProgram(shaderProgram_);
+    glUniformMatrix4fv(mvpLocation_, 1, GL_FALSE, viewProj.data());
+    glUniform3f(colorLocation_, color.x(), color.y(), color.z());
+    
+    glBindVertexArray(triangleVAO_);
+    glDrawElements(GL_LINES, triangleIndices_.size(), GL_UNSIGNED_INT, 0);
+    glBindVertexArray(0);
+}
+
+void MeshRenderer::clearTriangles() {
+    hasTriangleMesh_ = false;
+    triangleVertices_.clear();
+    triangleIndices_.clear();
 }
 
 } // namespace spherical_tiling
