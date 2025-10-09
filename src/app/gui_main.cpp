@@ -13,8 +13,55 @@
 
 #include <iostream>
 #include <memory>
+#include <stdexcept>
+#include <exception>
+#include <csignal>
+
+#ifdef __GNUC__
+#include <execinfo.h>
+#include <cxxabi.h>
+#include <dlfcn.h>
+#endif
 
 using namespace spherical_tiling;
+
+// Stack trace utility for debugging
+void printStackTrace() {
+#ifdef __GNUC__
+    std::cerr << "\n=== Stack Trace ===" << std::endl;
+    void* array[50];
+    int size = backtrace(array, 50);
+    char** messages = backtrace_symbols(array, size);
+    
+    for (int i = 0; i < size; ++i) {
+        Dl_info info;
+        if (dladdr(array[i], &info) && info.dli_sname) {
+            char* demangled = nullptr;
+            int status = -1;
+            demangled = abi::__cxa_demangle(info.dli_sname, nullptr, nullptr, &status);
+            std::cerr << "  [" << i << "] " 
+                      << (status == 0 ? demangled : info.dli_sname) 
+                      << " + " << (void*)((char*)array[i] - (char*)info.dli_saddr)
+                      << std::endl;
+            free(demangled);
+        } else {
+            std::cerr << "  [" << i << "] " << messages[i] << std::endl;
+        }
+    }
+    std::cerr << "===================" << std::endl;
+    free(messages);
+#else
+    std::cerr << "Stack trace not available on this platform" << std::endl;
+#endif
+}
+
+// Signal handler for segmentation faults
+void signalHandler(int signal) {
+    std::cerr << "\n!!! SEGMENTATION FAULT DETECTED !!!" << std::endl;
+    std::cerr << "Signal: " << signal << std::endl;
+    printStackTrace();
+    std::exit(signal);
+}
 
 // Application state
 struct AppState {
@@ -50,43 +97,53 @@ double lastMouseY = 0.0;
 bool mousePressed = false;
 
 void buildSphere() {
-    // Generate icosahedron
-    appState.primalVertices = generateIcosahedron(appState.radius);
-    auto icoFaces = generateIcosahedronFaces();
-    
-    // Perform Goldberg subdivision
-    auto subdivision = goldbergSubdivision(appState.primalVertices, icoFaces, 
-                                           appState.frequency, appState.radius);
-    appState.primalVertices = subdivision.vertices;
-    appState.primalFaces = subdivision.faces;
-    
-    // Build tile graph
-    appState.graph = std::make_unique<TileGraph>();
-    appState.graph->buildFromTriangulation(subdivision.vertices, subdivision.faces, 
-                                           appState.radius);
-    
-    // Construct dual cells
-    constructDualCells(*appState.graph, appState.radius);
-    
-    // Optimize if requested
-    if (appState.runOptimization) {
-        int maxIter = (appState.frequency <= 2) ? 50 : 100;
-        optimizeTileGraph(*appState.graph, appState.radius, appState.weightFunc, maxIter, true);
+    try {
+        // Generate icosahedron
+        appState.primalVertices = generateIcosahedron(appState.radius);
+        auto icoFaces = generateIcosahedronFaces();
+        
+        // Perform Goldberg subdivision
+        auto subdivision = goldbergSubdivision(appState.primalVertices, icoFaces, 
+                                               appState.frequency, appState.radius);
+        appState.primalVertices = subdivision.vertices;
+        appState.primalFaces = subdivision.faces;
+        
+        // Build tile graph
+        appState.graph = std::make_unique<TileGraph>();
+        appState.graph->buildFromTriangulation(subdivision.vertices, subdivision.faces, 
+                                               appState.radius);
+        
+        // Construct dual cells
         constructDualCells(*appState.graph, appState.radius);
+        
+        // Optimize if requested
+        if (appState.runOptimization) {
+            int maxIter = (appState.frequency <= 2) ? 50 : 100;
+            optimizeTileGraph(*appState.graph, appState.radius, appState.weightFunc, maxIter, true);
+            constructDualCells(*appState.graph, appState.radius);
+        }
+        
+        // Update renderer
+        // Primal mesh now shows the adjacency graph (TileGraph edges) in red
+        renderer.setPrimalMesh(*appState.graph, appState.radius);
+        renderer.setDualMesh(*appState.graph, appState.radius);
+        // Triangular mesh shows the subdivision face edges in green
+        renderer.setTriangleMesh(appState.primalVertices, appState.primalFaces);
+        
+        appState.needsRebuild = false;
+        
+        std::cout << "Built sphere: frequency=" << appState.frequency 
+                  << ", vertices=" << appState.primalVertices.size()
+                  << ", faces=" << appState.primalFaces.size() << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "ERROR in buildSphere(): " << e.what() << std::endl;
+        printStackTrace();
+        appState.needsRebuild = false; // Prevent infinite rebuild loop
+    } catch (...) {
+        std::cerr << "UNKNOWN ERROR in buildSphere()" << std::endl;
+        printStackTrace();
+        appState.needsRebuild = false; // Prevent infinite rebuild loop
     }
-    
-    // Update renderer
-    // Primal mesh now shows the adjacency graph (TileGraph edges) in red
-    renderer.setPrimalMesh(*appState.graph, appState.radius);
-    renderer.setDualMesh(*appState.graph, appState.radius);
-    // Triangular mesh shows the subdivision face edges in green
-    renderer.setTriangleMesh(appState.primalVertices, appState.primalFaces);
-    
-    appState.needsRebuild = false;
-    
-    std::cout << "Built sphere: frequency=" << appState.frequency 
-              << ", vertices=" << appState.primalVertices.size()
-              << ", faces=" << appState.primalFaces.size() << std::endl;
 }
 
 void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
@@ -238,118 +295,166 @@ void renderUI() {
 }
 
 int main() {
-    // Initialize GLFW
-    if (!glfwInit()) {
-        std::cerr << "Failed to initialize GLFW" << std::endl;
-        return -1;
-    }
+    // Install signal handler for segmentation faults
+    std::signal(SIGSEGV, signalHandler);
     
-    // Set OpenGL version (3.3 Core)
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    
+    try {
+        // Initialize GLFW
+        if (!glfwInit()) {
+            std::cerr << "Failed to initialize GLFW" << std::endl;
+            return -1;
+        }
+        
+        // Set OpenGL version (3.3 Core)
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+        
 #ifdef __APPLE__
-    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+        glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 #endif
-    
-    // Create window
-    GLFWwindow* window = glfwCreateWindow(1280, 720, "Spherical Tiling - GUI Viewer", nullptr, nullptr);
-    if (!window) {
-        std::cerr << "Failed to create GLFW window" << std::endl;
+        
+        // Create window
+        GLFWwindow* window = glfwCreateWindow(1280, 720, "Spherical Tiling - GUI Viewer", nullptr, nullptr);
+        if (!window) {
+            std::cerr << "Failed to create GLFW window" << std::endl;
+            glfwTerminate();
+            return -1;
+        }
+        
+        glfwMakeContextCurrent(window);
+        glfwSwapInterval(1); // Enable vsync
+        
+        // Set callbacks
+        glfwSetMouseButtonCallback(window, mouseButtonCallback);
+        glfwSetCursorPosCallback(window, cursorPosCallback);
+        glfwSetScrollCallback(window, scrollCallback);
+        
+        // Initialize GLAD
+        if (!gladLoadGL(glfwGetProcAddress)) {
+            std::cerr << "Failed to initialize GLAD" << std::endl;
+            glfwDestroyWindow(window);
+            glfwTerminate();
+            return -1;
+        }
+        
+        // Setup ImGui
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        if (!ImGui::GetCurrentContext()) {
+            std::cerr << "Failed to create ImGui context" << std::endl;
+            glfwDestroyWindow(window);
+            glfwTerminate();
+            return -1;
+        }
+        
+        ImGuiIO& io = ImGui::GetIO();
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+        
+        ImGui::StyleColorsDark();
+        
+        if (!ImGui_ImplGlfw_InitForOpenGL(window, true)) {
+            std::cerr << "Failed to initialize ImGui GLFW backend" << std::endl;
+            ImGui::DestroyContext();
+            glfwDestroyWindow(window);
+            glfwTerminate();
+            return -1;
+        }
+        
+        if (!ImGui_ImplOpenGL3_Init("#version 330")) {
+            std::cerr << "Failed to initialize ImGui OpenGL3 backend" << std::endl;
+            ImGui_ImplGlfw_Shutdown();
+            ImGui::DestroyContext();
+            glfwDestroyWindow(window);
+            glfwTerminate();
+            return -1;
+        }
+        
+        // Setup OpenGL state
+        glEnable(GL_DEPTH_TEST);
+        glLineWidth(2.0f);
+        
+        // Build initial sphere
+        buildSphere();
+        
+        // Main loop
+        while (!glfwWindowShouldClose(window)) {
+            try {
+                glfwPollEvents();
+                
+                // Rebuild sphere if needed
+                if (appState.needsRebuild) {
+                    buildSphere();
+                }
+                
+                // Get framebuffer size
+                int displayWidth, displayHeight;
+                glfwGetFramebufferSize(window, &displayWidth, &displayHeight);
+                
+                // Update camera projection
+                float aspect = static_cast<float>(displayWidth) / static_cast<float>(displayHeight);
+                camera.setPerspective(45.0f, aspect, 0.1f, 100.0f);
+                
+                // Clear screen
+                glViewport(0, 0, displayWidth, displayHeight);
+                glClearColor(0.2f, 0.2f, 0.25f, 1.0f);
+                glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+                
+                // Render meshes
+                Eigen::Matrix4f viewProj = camera.getProjectionMatrix() * camera.getViewMatrix();
+                
+                if (appState.showPrimal) {
+                    renderer.renderPrimal(viewProj, Eigen::Vector3f(1.0f, 0.0f, 0.0f)); // Red
+                }
+                
+                if (appState.showDual) {
+                    renderer.renderDual(viewProj, Eigen::Vector3f(0.0f, 0.0f, 0.0f)); // Black
+                }
+                
+                if (appState.showTriangles) {
+                    renderer.renderTriangles(viewProj, Eigen::Vector3f(0.0f, 1.0f, 0.0f)); // Green
+                }
+                
+                // Render UI
+                ImGui_ImplOpenGL3_NewFrame();
+                ImGui_ImplGlfw_NewFrame();
+                ImGui::NewFrame();
+                
+                renderUI();
+                
+                ImGui::Render();
+                ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+                
+                glfwSwapBuffers(window);
+            } catch (const std::exception& e) {
+                std::cerr << "ERROR in render loop: " << e.what() << std::endl;
+                printStackTrace();
+                // Continue running but skip this frame
+            } catch (...) {
+                std::cerr << "UNKNOWN ERROR in render loop" << std::endl;
+                printStackTrace();
+                // Continue running but skip this frame
+            }
+        }
+        
+        // Cleanup
+        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext();
+        
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        
+        return 0;
+    } catch (const std::exception& e) {
+        std::cerr << "FATAL ERROR in main(): " << e.what() << std::endl;
+        printStackTrace();
+        glfwTerminate();
+        return -1;
+    } catch (...) {
+        std::cerr << "UNKNOWN FATAL ERROR in main()" << std::endl;
+        printStackTrace();
         glfwTerminate();
         return -1;
     }
-    
-    glfwMakeContextCurrent(window);
-    glfwSwapInterval(1); // Enable vsync
-    
-    // Set callbacks
-    glfwSetMouseButtonCallback(window, mouseButtonCallback);
-    glfwSetCursorPosCallback(window, cursorPosCallback);
-    glfwSetScrollCallback(window, scrollCallback);
-    
-    // Initialize GLAD
-    if (!gladLoadGL(glfwGetProcAddress)) {
-        std::cerr << "Failed to initialize GLAD" << std::endl;
-        return -1;
-    }
-    
-    // Setup ImGui
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    
-    ImGui::StyleColorsDark();
-    
-    ImGui_ImplGlfw_InitForOpenGL(window, true);
-    ImGui_ImplOpenGL3_Init("#version 330");
-    
-    // Setup OpenGL state
-    glEnable(GL_DEPTH_TEST);
-    glLineWidth(2.0f);
-    
-    // Build initial sphere
-    buildSphere();
-    
-    // Main loop
-    while (!glfwWindowShouldClose(window)) {
-        glfwPollEvents();
-        
-        // Rebuild sphere if needed
-        if (appState.needsRebuild) {
-            buildSphere();
-        }
-        
-        // Get framebuffer size
-        int displayWidth, displayHeight;
-        glfwGetFramebufferSize(window, &displayWidth, &displayHeight);
-        
-        // Update camera projection
-        float aspect = static_cast<float>(displayWidth) / static_cast<float>(displayHeight);
-        camera.setPerspective(45.0f, aspect, 0.1f, 100.0f);
-        
-        // Clear screen
-        glViewport(0, 0, displayWidth, displayHeight);
-        glClearColor(0.2f, 0.2f, 0.25f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        
-        // Render meshes
-        Eigen::Matrix4f viewProj = camera.getProjectionMatrix() * camera.getViewMatrix();
-        
-        if (appState.showPrimal) {
-            renderer.renderPrimal(viewProj, Eigen::Vector3f(1.0f, 0.0f, 0.0f)); // Red
-        }
-        
-        if (appState.showDual) {
-            renderer.renderDual(viewProj, Eigen::Vector3f(0.0f, 0.0f, 0.0f)); // Black
-        }
-        
-        if (appState.showTriangles) {
-            renderer.renderTriangles(viewProj, Eigen::Vector3f(0.0f, 1.0f, 0.0f)); // Green
-        }
-        
-        // Render UI
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
-        ImGui::NewFrame();
-        
-        renderUI();
-        
-        ImGui::Render();
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-        
-        glfwSwapBuffers(window);
-    }
-    
-    // Cleanup
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
-    ImGui::DestroyContext();
-    
-    glfwDestroyWindow(window);
-    glfwTerminate();
-    
-    return 0;
 }

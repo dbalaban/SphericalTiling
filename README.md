@@ -46,10 +46,30 @@ This script will:
 # Install dependencies (CLI + GUI)
 sudo apt-get install cmake libeigen3-dev libceres-dev libglfw3-dev
 
-# Build the project
+# Build the project (Release mode by default)
 mkdir build && cd build
 cmake ..
 cmake --build .
+```
+
+To build in Debug mode with debugging symbols:
+
+```bash
+mkdir build && cd build
+cmake -DCMAKE_BUILD_TYPE=Debug ..
+cmake --build .
+```
+
+To debug with gdb:
+
+```bash
+gdb ./bin/spherical_tiling_gui
+# In gdb:
+# run             - Start the program
+# bt              - Show backtrace after crash
+# break <func>    - Set breakpoint
+# continue        - Continue execution
+# print <var>     - Print variable value
 ```
 
 ### On macOS
@@ -58,10 +78,30 @@ cmake --build .
 # Install dependencies (CLI + GUI)
 brew install cmake eigen ceres-solver glfw
 
-# Build the project
+# Build the project (Release mode by default)
 mkdir build && cd build
 cmake ..
 cmake --build .
+```
+
+To build in Debug mode:
+
+```bash
+mkdir build && cd build
+cmake -DCMAKE_BUILD_TYPE=Debug ..
+cmake --build .
+```
+
+To debug with lldb:
+
+```bash
+lldb ./bin/spherical_tiling_gui
+# In lldb:
+# run             - Start the program
+# bt              - Show backtrace after crash
+# breakpoint set --name <func> - Set breakpoint
+# continue        - Continue execution
+# frame variable  - Print variables in current frame
 ```
 
 ## Usage
