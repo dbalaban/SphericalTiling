@@ -75,7 +75,8 @@ void buildSphere() {
     }
     
     // Update renderer
-    renderer.setPrimalMesh(appState.primalVertices, appState.primalFaces);
+    // Primal mesh now shows the adjacency graph (TileGraph edges) in red
+    renderer.setPrimalMesh(*appState.graph, appState.radius);
     renderer.setDualMesh(*appState.graph, appState.radius);
     
     appState.needsRebuild = false;
@@ -193,7 +194,10 @@ void renderUI() {
         ImGui::Text("Sphere Parameters:");
         ImGui::Separator();
         
-        ImGui::SliderInt("Q-Frequency", &newFrequency, 1, 8);
+        ImGui::InputInt("Q-Frequency", &newFrequency);
+        // Clamp to reasonable range
+        if (newFrequency < 1) newFrequency = 1;
+        if (newFrequency > 20) newFrequency = 20;
         ImGui::Text("Expected dual cells: %d", 10 * newFrequency * newFrequency + 2);
         
         ImGui::Separator();

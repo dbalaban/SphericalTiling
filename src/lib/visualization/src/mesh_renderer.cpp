@@ -122,6 +122,32 @@ void MeshRenderer::setPrimalMesh(const std::vector<Eigen::Vector3d>& vertices,
     setupPrimalBuffers();
 }
 
+void MeshRenderer::setPrimalMesh(const TileGraph& graph, double radius) {
+    primalVertices_.clear();
+    primalIndices_.clear();
+    
+    const auto& nodes = graph.getNodes();
+    const auto& edges = graph.getEdges();
+    
+    // Add all node positions as vertices
+    primalVertices_.reserve(nodes.size() * 3);
+    for (const auto& node : nodes) {
+        primalVertices_.push_back(static_cast<float>(node.center.x()));
+        primalVertices_.push_back(static_cast<float>(node.center.y()));
+        primalVertices_.push_back(static_cast<float>(node.center.z()));
+    }
+    
+    // Add all edges as line segments
+    primalIndices_.reserve(edges.size() * 2);
+    for (const auto& edge : edges) {
+        primalIndices_.push_back(edge.node1);
+        primalIndices_.push_back(edge.node2);
+    }
+    
+    hasPrimalMesh_ = true;
+    setupPrimalBuffers();
+}
+
 void MeshRenderer::setDualMesh(const TileGraph& graph, double radius) {
     dualVertices_.clear();
     dualIndices_.clear();

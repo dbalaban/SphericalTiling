@@ -16,6 +16,9 @@ public:
     void setPrimalMesh(const std::vector<Eigen::Vector3d>& vertices,
                        const std::vector<Eigen::Vector3i>& faces);
     
+    // Set mesh data for primal mesh from TileGraph (adjacency graph)
+    void setPrimalMesh(const TileGraph& graph, double radius);
+    
     // Set mesh data for dual (Voronoi) mesh from TileGraph
     void setDualMesh(const TileGraph& graph, double radius);
     
