@@ -3,6 +3,9 @@ build/
 cmake-build-*/
 bin/
 
+# Third-party libraries
+third_party/
+
 # Compiled files
 *.o
 *.a

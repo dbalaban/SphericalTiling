@@ -22,3 +22,14 @@ target_link_libraries(spherical_tiling_benchmark PRIVATE
     geometric
     optimization
 )
+
+# GUI executable
+add_executable(spherical_tiling_gui
+    gui_main.cpp
+)
+
+target_link_libraries(spherical_tiling_gui PRIVATE
+    geometric
+    optimization
+    visualization
+)
