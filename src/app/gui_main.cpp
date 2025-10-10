@@ -149,10 +149,11 @@ void buildSphere() {
         }
         
         // Update renderer
-        // Primal mesh now shows the adjacency graph (TileGraph edges) in red
+        // Primal mesh: adjacency graph of dual cells (TileGraph edges connecting pentagon/hexagon centers)
         renderer->setPrimalMesh(*appState.graph, appState.radius);
+        // Dual mesh: boundaries of dual cells (pentagon/hexagon edges formed by circumcenters)
         renderer->setDualMesh(*appState.graph, appState.radius);
-        // Triangular mesh shows the subdivision face edges in green
+        // Triangle mesh: edges of the triangular subdivision
         renderer->setTriangleMesh(appState.primalVertices, appState.primalFaces);
         
         appState.needsRebuild = false;
@@ -235,9 +236,18 @@ void renderUI() {
     ImGui::Begin("Display Options");
     
     ImGui::Text("Mesh Visibility:");
-    ImGui::Checkbox("Show Primal (Red)", &appState.showPrimal);
-    ImGui::Checkbox("Show Dual (Black)", &appState.showDual);
-    ImGui::Checkbox("Show Triangles (Green)", &appState.showTriangles);
+    if (ImGui::Checkbox("Show Primal (Red)", &appState.showPrimal)) {}
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Adjacency graph of dual cells\n(connects centers of pentagons/hexagons)");
+    }
+    if (ImGui::Checkbox("Show Dual (Black)", &appState.showDual)) {}
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Boundaries of dual cells\n(pentagon/hexagon edges)");
+    }
+    if (ImGui::Checkbox("Show Triangles (Green)", &appState.showTriangles)) {}
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Edges of triangular subdivision");
+    }
     
     ImGui::Separator();
     ImGui::Text("Camera:");

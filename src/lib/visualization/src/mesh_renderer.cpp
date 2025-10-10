@@ -2,6 +2,7 @@
 #include <iostream>
 #include <cmath>
 #include <stdexcept>
+#include <vector>
 
 namespace spherical_tiling {
 
@@ -169,21 +170,76 @@ void MeshRenderer::setDualMesh(const TileGraph& graph, double radius) {
     dualIndices_.clear();
     
     const auto& nodes = graph.getNodes();
-    const auto& edges = graph.getEdges();
     
-    // Add all node positions as vertices
-    dualVertices_.reserve(nodes.size() * 3);
-    for (const auto& node : nodes) {
-        dualVertices_.push_back(static_cast<float>(node.center.x()));
-        dualVertices_.push_back(static_cast<float>(node.center.y()));
-        dualVertices_.push_back(static_cast<float>(node.center.z()));
-    }
+    // CORRECT DUAL MESH IMPLEMENTATION:
+    // The TileGraph nodes ARE the primal vertices (92 nodes with 5/6 neighbors each).
+    // Each primal vertex is the center of a dual cell (pentagon or hexagon).
+    // 
+    // For each primal vertex with N neighbors:
+    // 1. Compute N circumcenters (one per triangle formed by vertex + consecutive neighbors)
+    // 2. These N circumcenters are the vertices of the dual cell
+    // 3. Connect consecutive circumcenters to form the dual cell boundary
+    //
+    // This creates proper pentagons (N=5) and hexagons (N=6).
     
-    // Add all edges as line segments
-    dualIndices_.reserve(edges.size() * 2);
-    for (const auto& edge : edges) {
-        dualIndices_.push_back(edge.node1);
-        dualIndices_.push_back(edge.node2);
+    int vertexOffset = 0;
+    
+    for (size_t nodeIdx = 0; nodeIdx < nodes.size(); ++nodeIdx) {
+        const auto& node = nodes[nodeIdx];
+        const auto& neighbors = node.neighbors;
+        
+        if (neighbors.size() < 3) {
+            continue;
+        }
+        
+        // Compute circumcenters for this dual cell
+        std::vector<Eigen::Vector3d> cellCircumcenters;
+        
+        for (size_t i = 0; i < neighbors.size(); ++i) {
+            int n1 = neighbors[i];
+            int n2 = neighbors[(i + 1) % neighbors.size()];
+            
+            // Compute circumcenter of triangle (node, neighbor1, neighbor2)
+            const Eigen::Vector3d& p1 = node.center;
+            const Eigen::Vector3d& p2 = nodes[n1].center;
+            const Eigen::Vector3d& p3 = nodes[n2].center;
+            
+            // Get normals to the great circle arcs
+            Eigen::Vector3d normal1 = p1.cross(p2).normalized();
+            Eigen::Vector3d normal2 = p2.cross(p3).normalized();
+            
+            // The circumcenter is perpendicular to both normals
+            Eigen::Vector3d center = normal1.cross(normal2).normalized();
+            
+            // Check which direction to use
+            Eigen::Vector3d midpoint = (p1 + p2 + p3).normalized();
+            if (center.dot(midpoint) < 0) {
+                center = -center;
+            }
+            
+            Eigen::Vector3d circumcenter = center * radius;
+            cellCircumcenters.push_back(circumcenter);
+        }
+        
+        // Add vertices for this cell
+        int startIdx = vertexOffset;
+        for (const auto& cc : cellCircumcenters) {
+            dualVertices_.push_back(static_cast<float>(cc.x()));
+            dualVertices_.push_back(static_cast<float>(cc.y()));
+            dualVertices_.push_back(static_cast<float>(cc.z()));
+            vertexOffset++;
+        }
+        
+        // Create edges connecting consecutive circumcenters
+        // This forms a closed N-gon (pentagon or hexagon)
+        int n = cellCircumcenters.size();
+        for (int i = 0; i < n; ++i) {
+            int idx1 = startIdx + i;
+            int idx2 = startIdx + ((i + 1) % n);
+            
+            dualIndices_.push_back(idx1);
+            dualIndices_.push_back(idx2);
+        }
     }
     
     hasDualMesh_ = true;
