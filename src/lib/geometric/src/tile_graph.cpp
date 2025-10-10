@@ -68,35 +68,53 @@ void TileGraph::buildFromTriangulation(
         edges_.push_back({edge.first, edge.second});
     }
     
-    // Order neighbors cyclically for each vertex
+    // Order neighbors cyclically for each vertex using azimuth sorting
     for (size_t i = 0; i < nodes_.size(); ++i) {
         auto& faceList = vertexFaces[i];
         if (faceList.empty()) continue;
         
-        std::vector<int> orderedNeighbors;
-        std::map<int, int> nextNeighbor; // Map from one neighbor to the next
-        
-        // Build a map of neighbor transitions
+        // Collect unique neighbors
+        std::set<int> neighborSet;
         for (const auto& [a, b] : faceList) {
-            nextNeighbor[a] = b;
+            neighborSet.insert(a);
+            neighborSet.insert(b);
         }
         
-        // Start from any neighbor
-        if (nextNeighbor.empty()) continue;
+        std::vector<int> neighbors(neighborSet.begin(), neighborSet.end());
+        if (neighbors.empty()) continue;
         
-        int start = nextNeighbor.begin()->first;
-        int current = start;
+        // Get the center vertex position and normal
+        Eigen::Vector3d center = vertices[i];
+        Eigen::Vector3d normal = center.normalized();
         
-        // Follow the chain until we complete the cycle
-        for (size_t count = 0; count < faceList.size(); ++count) {
-            orderedNeighbors.push_back(current);
-            
-            auto it = nextNeighbor.find(current);
-            if (it == nextNeighbor.end()) {
-                // Chain broken - this shouldn't happen for a closed mesh
-                break;
-            }
-            current = it->second;
+        // Create a local tangent frame at the vertex
+        // Choose an arbitrary tangent vector perpendicular to the normal
+        Eigen::Vector3d tangent;
+        if (std::abs(normal.z()) < 0.9) {
+            tangent = Eigen::Vector3d(0, 0, 1).cross(normal).normalized();
+        } else {
+            tangent = Eigen::Vector3d(1, 0, 0).cross(normal).normalized();
+        }
+        Eigen::Vector3d bitangent = normal.cross(tangent);
+        
+        // Sort neighbors by azimuth in the tangent frame
+        std::vector<std::pair<double, int>> azimuthNeighbors;
+        for (int neighbor : neighbors) {
+            Eigen::Vector3d dir = vertices[neighbor] - center;
+            // Project to tangent plane
+            double u = dir.dot(tangent);
+            double v = dir.dot(bitangent);
+            double azimuth = std::atan2(v, u);
+            azimuthNeighbors.push_back({azimuth, neighbor});
+        }
+        
+        // Sort by azimuth
+        std::sort(azimuthNeighbors.begin(), azimuthNeighbors.end());
+        
+        // Extract ordered neighbors
+        std::vector<int> orderedNeighbors;
+        for (const auto& [azimuth, neighbor] : azimuthNeighbors) {
+            orderedNeighbors.push_back(neighbor);
         }
         
         nodes_[i].neighbors = orderedNeighbors;
@@ -109,15 +127,29 @@ void TileGraph::buildFromTriangulation(
             int v1 = face[(i + 1) % 3];
             int v2 = face[(i + 2) % 3];
             
-            // Compute angle at v0
-            Eigen::Vector3d edge1 = (vertices[v1] - vertices[v0]).normalized();
-            Eigen::Vector3d edge2 = (vertices[v2] - vertices[v0]).normalized();
+            // Compute spherical angle at v0 using spherical law of cosines
+            // First, get the central angles (arc lengths on unit sphere)
+            Eigen::Vector3d p0 = vertices[v0].normalized();
+            Eigen::Vector3d p1 = vertices[v1].normalized();
+            Eigen::Vector3d p2 = vertices[v2].normalized();
             
-            double cosAngle = edge1.dot(edge2);
-            cosAngle = std::max(-1.0, std::min(1.0, cosAngle));
-            double angle = std::acos(cosAngle);
+            // Central angles
+            double b = std::acos(std::max(-1.0, std::min(1.0, p0.dot(p2)))); // arc from v0 to v2
+            double c = std::acos(std::max(-1.0, std::min(1.0, p0.dot(p1)))); // arc from v0 to v1
+            double a = std::acos(std::max(-1.0, std::min(1.0, p1.dot(p2)))); // arc from v1 to v2
             
-            nodes_[v0].angle_defect += angle;
+            // Spherical law of cosines to get angle at v0
+            // cos(a) = cos(b)*cos(c) + sin(b)*sin(c)*cos(A)
+            // => cos(A) = (cos(a) - cos(b)*cos(c)) / (sin(b)*sin(c))
+            double sin_b = std::sin(b);
+            double sin_c = std::sin(c);
+            
+            if (sin_b > 1e-10 && sin_c > 1e-10) {
+                double cos_angle = (std::cos(a) - std::cos(b) * std::cos(c)) / (sin_b * sin_c);
+                cos_angle = std::max(-1.0, std::min(1.0, cos_angle));
+                double angle = std::acos(cos_angle);
+                nodes_[v0].angle_defect += angle;
+            }
         }
     }
     

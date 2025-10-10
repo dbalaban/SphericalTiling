@@ -97,15 +97,14 @@ double sphericalPolygonArea(const std::vector<Eigen::Vector3d>& vertices, double
         area += excess;
     }
     
-    // Apply correction factor (empirically determined to be 1/3)
-    // This may be due to how the spherical excess is computed or interpreted
-    area /= 3.0;
-    
     return area * radius * radius;
 }
 
-double computePlanarAngleVariance(const std::vector<Eigen::Vector3d>& vertices) {
+double computePlanarAngleVariance(const std::vector<Eigen::Vector3d>& vertices, const Eigen::Vector3d& center) {
     if (vertices.size() < 3) return 0.0;
+    
+    // Normal at the center (for tangent plane)
+    Eigen::Vector3d normal = center.normalized();
     
     int n = vertices.size();
     std::vector<double> angles;
@@ -115,9 +114,16 @@ double computePlanarAngleVariance(const std::vector<Eigen::Vector3d>& vertices) 
         const Eigen::Vector3d& curr = vertices[i];
         const Eigen::Vector3d& next = vertices[(i + 1) % n];
         
-        // Compute planar angle (treating vertices as 3D points in Euclidean space)
-        Eigen::Vector3d v1 = (prev - curr).normalized();
-        Eigen::Vector3d v2 = (next - curr).normalized();
+        // Project to tangent plane at center
+        Eigen::Vector3d v1 = prev - curr;
+        Eigen::Vector3d v2 = next - curr;
+        
+        // Project onto tangent plane at center
+        v1 = v1 - (v1.dot(normal)) * normal;
+        v2 = v2 - (v2.dot(normal)) * normal;
+        
+        v1 = v1.normalized();
+        v2 = v2.normalized();
         
         double cosAngle = v1.dot(v2);
         cosAngle = std::max(-1.0, std::min(1.0, cosAngle));
@@ -180,7 +186,7 @@ void constructDualCells(TileGraph& graph, double radius) {
         if (dualVertices.size() >= 3) {
             double area = sphericalPolygonArea(dualVertices, radius);
             node.area = std::abs(area);
-            node.angle_variance = computePlanarAngleVariance(dualVertices);
+            node.angle_variance = computePlanarAngleVariance(dualVertices, node.center);
         } else {
             node.area = 0.0;
             node.angle_variance = 0.0;

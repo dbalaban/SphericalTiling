@@ -113,9 +113,6 @@ T sphericalPolygonAreaT(const std::vector<Eigen::Matrix<T, 3, 1>>& vertices, con
         }
     }
     
-    // Apply correction factor
-    area /= T(3.0);
-    
     return area * radius * radius;
 }
 
