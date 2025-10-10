@@ -170,31 +170,37 @@ void MeshRenderer::setDualMesh(const TileGraph& graph, double radius) {
     
     const auto& nodes = graph.getNodes();
     
-    // DUAL MESH IMPLEMENTATION:
+    // DUAL MESH IMPLEMENTATION (REVISED):
     // The dual mesh shows the edges of the dual cells (pentagons and hexagons).
-    // Each primal vertex (node) is the center of a dual cell.
-    // The dual cell has N edges, where N is the number of neighbors of that primal vertex.
-    // 
-    // For each primal vertex:
-    // 1. Compute the vertices of its dual cell (circumcenters of incident triangles)
-    // 2. Connect these vertices in order to form the boundary edges of the dual cell
+    // We'll create this by:
+    // 1. For each primal vertex, compute the circumcenters that form its dual cell boundary
+    // 2. Collect ALL unique circumcenters (dual vertices)
+    // 3. For each dual cell, create edges between consecutive circumcenters
     //
-    // This creates closed pentagon/hexagon boundaries around each primal vertex.
+    // This approach ensures we have one vertex per unique circumcenter position.
     
-    int vertexOffset = 0;
+    // Helper to check if two points are the same (within tolerance)
+    auto arePointsEqual = [](const Eigen::Vector3d& a, const Eigen::Vector3d& b) -> bool {
+        return (a - b).norm() < 1e-9;
+    };
     
+    // Store all unique dual vertices
+    std::vector<Eigen::Vector3d> uniqueDualVertices;
+    
+    // For each primal vertex, store its dual cell vertex indices
+    std::vector<std::vector<int>> cellVertexIndices;
+    cellVertexIndices.resize(nodes.size());
+    
+    // First pass: compute all circumcenters and find/add unique ones
     for (size_t nodeIdx = 0; nodeIdx < nodes.size(); ++nodeIdx) {
         const auto& node = nodes[nodeIdx];
         const auto& neighbors = node.neighbors;
         
         if (neighbors.size() < 3) {
-            continue; // Skip degenerate nodes
+            continue;
         }
         
-        std::vector<Eigen::Vector3d> dualVertices;
-        
-        // For each pair of consecutive neighbors, compute circumcenter
-        // This forms the vertices of the dual cell (pentagon or hexagon)
+        // Compute circumcenters for this dual cell
         for (size_t i = 0; i < neighbors.size(); ++i) {
             int n1 = neighbors[i];
             int n2 = neighbors[(i + 1) % neighbors.size()];
@@ -211,29 +217,51 @@ void MeshRenderer::setDualMesh(const TileGraph& graph, double radius) {
             // The circumcenter is perpendicular to both normals
             Eigen::Vector3d center = normal1.cross(normal2).normalized();
             
-            // Check which direction to use (should be on the same side as the triangle)
+            // Check which direction to use
             Eigen::Vector3d midpoint = (p1 + p2 + p3).normalized();
             if (center.dot(midpoint) < 0) {
                 center = -center;
             }
             
             Eigen::Vector3d circumcenter = center * radius;
-            dualVertices.push_back(circumcenter);
+            
+            // Find or add this circumcenter to the unique list
+            int vertexIndex = -1;
+            for (size_t j = 0; j < uniqueDualVertices.size(); ++j) {
+                if (arePointsEqual(uniqueDualVertices[j], circumcenter)) {
+                    vertexIndex = static_cast<int>(j);
+                    break;
+                }
+            }
+            
+            if (vertexIndex == -1) {
+                vertexIndex = static_cast<int>(uniqueDualVertices.size());
+                uniqueDualVertices.push_back(circumcenter);
+            }
+            
+            cellVertexIndices[nodeIdx].push_back(vertexIndex);
+        }
+    }
+    
+    // Add all unique vertices to the GPU buffer
+    for (const auto& v : uniqueDualVertices) {
+        dualVertices_.push_back(static_cast<float>(v.x()));
+        dualVertices_.push_back(static_cast<float>(v.y()));
+        dualVertices_.push_back(static_cast<float>(v.z()));
+    }
+    
+    // Second pass: create edges for each dual cell
+    for (size_t nodeIdx = 0; nodeIdx < nodes.size(); ++nodeIdx) {
+        const auto& vertexIndices = cellVertexIndices[nodeIdx];
+        
+        if (vertexIndices.size() < 3) {
+            continue;
         }
         
-        // Add vertices to the global vertex buffer
-        int startIdx = vertexOffset;
-        for (const auto& v : dualVertices) {
-            dualVertices_.push_back(static_cast<float>(v.x()));
-            dualVertices_.push_back(static_cast<float>(v.y()));
-            dualVertices_.push_back(static_cast<float>(v.z()));
-            vertexOffset++;
-        }
-        
-        // Add edges connecting consecutive vertices to form the dual cell boundary
-        for (size_t i = 0; i < dualVertices.size(); ++i) {
-            dualIndices_.push_back(startIdx + i);
-            dualIndices_.push_back(startIdx + (i + 1) % dualVertices.size());
+        // Create edges connecting consecutive vertices
+        for (size_t i = 0; i < vertexIndices.size(); ++i) {
+            dualIndices_.push_back(vertexIndices[i]);
+            dualIndices_.push_back(vertexIndices[(i + 1) % vertexIndices.size()]);
         }
     }
     
