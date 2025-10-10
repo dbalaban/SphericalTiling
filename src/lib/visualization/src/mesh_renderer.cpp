@@ -2,10 +2,7 @@
 #include <iostream>
 #include <cmath>
 #include <stdexcept>
-#include <map>
-#include <tuple>
 #include <vector>
-#include <algorithm>
 
 namespace spherical_tiling {
 
@@ -174,19 +171,19 @@ void MeshRenderer::setDualMesh(const TileGraph& graph, double radius) {
     
     const auto& nodes = graph.getNodes();
     
-    // NEW DUAL MESH IMPLEMENTATION (per user suggestion):
-    // Build dual edges from primal edges, not by looping around vertices.
+    // CORRECT DUAL MESH IMPLEMENTATION:
+    // The TileGraph nodes ARE the primal vertices (92 nodes with 5/6 neighbors each).
+    // Each primal vertex is the center of a dual cell (pentagon or hexagon).
     // 
-    // 1. For each triangle in the primal mesh, compute its circumcenter (dual vertex)
-    // 2. For each primal edge, find the two triangles that share it
-    // 3. Create a dual edge connecting the circumcenters of those two triangles
+    // For each primal vertex with N neighbors:
+    // 1. Compute N circumcenters (one per triangle formed by vertex + consecutive neighbors)
+    // 2. These N circumcenters are the vertices of the dual cell
+    // 3. Connect consecutive circumcenters to form the dual cell boundary
     //
-    // This creates the proper dual mesh where each primal edge → one dual edge.
+    // This creates proper pentagons (N=5) and hexagons (N=6).
     
-    // Map each triangle (sorted triple of vertex indices) to its circumcenter index
-    std::map<std::tuple<int, int, int>, int> triangleToVertexIndex;
+    int vertexOffset = 0;
     
-    // Step 1: Identify all triangles and compute their circumcenters
     for (size_t nodeIdx = 0; nodeIdx < nodes.size(); ++nodeIdx) {
         const auto& node = nodes[nodeIdx];
         const auto& neighbors = node.neighbors;
@@ -195,22 +192,14 @@ void MeshRenderer::setDualMesh(const TileGraph& graph, double radius) {
             continue;
         }
         
-        // Each pair of consecutive neighbors forms a triangle with this node
+        // Compute circumcenters for this dual cell
+        std::vector<Eigen::Vector3d> cellCircumcenters;
+        
         for (size_t i = 0; i < neighbors.size(); ++i) {
             int n1 = neighbors[i];
             int n2 = neighbors[(i + 1) % neighbors.size()];
             
-            // Create sorted triangle key
-            std::vector<int> tri = {(int)nodeIdx, n1, n2};
-            std::sort(tri.begin(), tri.end());
-            auto triKey = std::make_tuple(tri[0], tri[1], tri[2]);
-            
-            // Skip if we've already processed this triangle
-            if (triangleToVertexIndex.find(triKey) != triangleToVertexIndex.end()) {
-                continue;
-            }
-            
-            // Compute circumcenter of this triangle
+            // Compute circumcenter of triangle (node, neighbor1, neighbor2)
             const Eigen::Vector3d& p1 = node.center;
             const Eigen::Vector3d& p2 = nodes[n1].center;
             const Eigen::Vector3d& p3 = nodes[n2].center;
@@ -229,46 +218,24 @@ void MeshRenderer::setDualMesh(const TileGraph& graph, double radius) {
             }
             
             Eigen::Vector3d circumcenter = center * radius;
-            
-            // Add this circumcenter as a dual vertex
-            int vertexIndex = dualVertices_.size() / 3;
-            dualVertices_.push_back(static_cast<float>(circumcenter.x()));
-            dualVertices_.push_back(static_cast<float>(circumcenter.y()));
-            dualVertices_.push_back(static_cast<float>(circumcenter.z()));
-            
-            triangleToVertexIndex[triKey] = vertexIndex;
-        }
-    }
-    
-    // Step 2: For each primal edge, create a dual edge
-    const auto& edges = graph.getEdges();
-    for (const auto& edge : edges) {
-        int v1 = edge.node1;
-        int v2 = edge.node2;
-        
-        // Find the two triangles that share this edge
-        std::vector<std::tuple<int, int, int>> matchingTriangles;
-        
-        for (const auto& [tri, idx] : triangleToVertexIndex) {
-            int t0 = std::get<0>(tri);
-            int t1 = std::get<1>(tri);
-            int t2 = std::get<2>(tri);
-            
-            // Check if this triangle contains both v1 and v2
-            int count = 0;
-            if (t0 == v1 || t0 == v2) count++;
-            if (t1 == v1 || t1 == v2) count++;
-            if (t2 == v1 || t2 == v2) count++;
-            
-            if (count == 2) {
-                matchingTriangles.push_back(tri);
-            }
+            cellCircumcenters.push_back(circumcenter);
         }
         
-        // There should be exactly 2 triangles sharing this edge
-        if (matchingTriangles.size() == 2) {
-            int idx1 = triangleToVertexIndex[matchingTriangles[0]];
-            int idx2 = triangleToVertexIndex[matchingTriangles[1]];
+        // Add vertices for this cell
+        int startIdx = vertexOffset;
+        for (const auto& cc : cellCircumcenters) {
+            dualVertices_.push_back(static_cast<float>(cc.x()));
+            dualVertices_.push_back(static_cast<float>(cc.y()));
+            dualVertices_.push_back(static_cast<float>(cc.z()));
+            vertexOffset++;
+        }
+        
+        // Create edges connecting consecutive circumcenters
+        // This forms a closed N-gon (pentagon or hexagon)
+        int n = cellCircumcenters.size();
+        for (int i = 0; i < n; ++i) {
+            int idx1 = startIdx + i;
+            int idx2 = startIdx + ((i + 1) % n);
             
             dualIndices_.push_back(idx1);
             dualIndices_.push_back(idx2);
