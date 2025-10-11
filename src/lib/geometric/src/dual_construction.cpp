@@ -23,8 +23,7 @@ Eigen::Vector3d sphericalCircumcenter(
     Eigen::Vector3d center = n1.cross(n2).normalized();
     
     // Check which direction to use (should be on the same side as the triangle)
-    Eigen::Vector3d midpoint = (p1 + p2 + p3).normalized();
-    if (center.dot(midpoint) < 0) {
+    if (center.dot(p1) < 0) {
         center = -center;
     }
     
