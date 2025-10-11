@@ -41,8 +41,7 @@ Eigen::Matrix<T, 3, 1> sphericalCircumcenterT(
     Eigen::Matrix<T, 3, 1> center = n1.cross(n2).normalized();
     
     // Check which direction to use
-    Eigen::Matrix<T, 3, 1> midpoint = (p1 + p2 + p3).normalized();
-    if (center.dot(midpoint) < T(0.0)) {
+    if (center.dot(p1) < T(0.0)) {
         center = -center;
     }
     

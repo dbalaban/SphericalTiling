@@ -7,27 +7,6 @@
 
 namespace spherical_tiling {
 
-Eigen::Vector3d sphericalCircumcenter(
-    const Eigen::Vector3d& p1,
-    const Eigen::Vector3d& p2,
-    const Eigen::Vector3d& p3,
-    double radius
-) {
-    // Use the templated version with double type
-    return sphericalCircumcenterT<double>(p1, p2, p3, radius);
-}
-
-double sphericalPolygonArea(const std::vector<Eigen::Vector3d>& vertices, double radius) {
-    // Use the templated version with double type
-    return sphericalPolygonAreaT<double>(vertices, radius);
-}
-
-double computePlanarAngleVariance(const std::vector<Eigen::Vector3d>& vertices, const Eigen::Vector3d& center) {
-    // Use the templated versions with double type
-    std::vector<double> angles = computeTangentSpaceAngles<double>(center, vertices, 1.0); // radius is not used
-    return computeAngleVariance<double>(angles);
-}
-
 void constructDualCells(TileGraph& graph, double radius) {
     const auto& nodes = graph.getNodes();
     
@@ -51,7 +30,7 @@ void constructDualCells(TileGraph& graph, double radius) {
             int n1 = neighbors[i];
             int n2 = neighbors[(i + 1) % neighbors.size()];
             
-            Eigen::Vector3d circumcenter = sphericalCircumcenter(
+            Eigen::Vector3d circumcenter = sphericalCircumcenterT<double>(
                 node.center,
                 nodes[n1].center,
                 nodes[n2].center,
@@ -62,9 +41,10 @@ void constructDualCells(TileGraph& graph, double radius) {
         
         // Compute area and angle variance for the dual cell
         if (dualVertices.size() >= 3) {
-            double area = sphericalPolygonArea(dualVertices, radius);
+            double area = sphericalPolygonAreaT<double>(dualVertices, radius);
             node.area = std::abs(area);
-            node.angle_variance = computePlanarAngleVariance(dualVertices, node.center);
+            std::vector<double> angles = computeTangentSpaceAngles<double>(node.center, dualVertices, 1.0);
+            node.angle_variance = computeAngleVariance<double>(angles);
         } else {
             node.area = 0.0;
             node.angle_variance = 0.0;
