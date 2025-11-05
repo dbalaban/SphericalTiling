@@ -1,8 +1,6 @@
 #include "camera.h"
 #include "mesh_renderer.h"
-#include "goldberg_subdivision.h"
-#include "tile_graph.h"
-#include "dual_construction.h"
+#include "mesh_construction.h"
 #include "optimization.h"
 
 #include <glad/gl.h>
@@ -94,7 +92,7 @@ struct AppState {
     double radius = 1.0;
     int frequency = 3;
     WeightFunction weightFunc = WeightFunction::F1;
-    bool runOptimization = true;
+    bool runOptimization = false;
     
     // Mesh data
     std::vector<Eigen::Vector3d> primalVertices;
@@ -102,7 +100,7 @@ struct AppState {
     std::unique_ptr<TileGraph> graph;
     
     // Display options
-    bool showPrimal = true;
+    bool showPrimal = false;
     bool showDual = true;
     bool showTriangles = false;
     
@@ -147,7 +145,7 @@ void buildSphere() {
             optimizeTileGraph(*appState.graph, appState.radius, appState.weightFunc, maxIter, true);
             constructDualCells(*appState.graph, appState.radius);
         }
-        
+
         // Update renderer
         // Primal mesh now shows the adjacency graph (TileGraph edges) in red
         renderer->setPrimalMesh(*appState.graph, appState.radius);

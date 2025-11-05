@@ -1,6 +1,5 @@
 #pragma once
 
-#include "tile_graph.h"
 #include <Eigen/Dense>
 #include <vector>
 #include <glad/gl.h>

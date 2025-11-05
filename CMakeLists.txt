@@ -33,8 +33,8 @@ find_package(Ceres REQUIRED)
 
 # Add library subdirectories
 add_subdirectory(src/lib/geometric)
-add_subdirectory(src/lib/optimization)
-add_subdirectory(src/lib/visualization)
+# add_subdirectory(src/lib/optimization)
+# add_subdirectory(src/lib/visualization)
 
 # Add application subdirectory
 add_subdirectory(src/app)

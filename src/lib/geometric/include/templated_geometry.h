@@ -41,8 +41,7 @@ Eigen::Matrix<T, 3, 1> sphericalCircumcenterT(
     Eigen::Matrix<T, 3, 1> center = n1.cross(n2).normalized();
     
     // Check which direction to use
-    Eigen::Matrix<T, 3, 1> midpoint = (p1 + p2 + p3).normalized();
-    if (center.dot(midpoint) < T(0.0)) {
+    if (center.dot(p1) < T(0.0)) {
         center = -center;
     }
     
@@ -52,12 +51,6 @@ Eigen::Matrix<T, 3, 1> sphericalCircumcenterT(
 // Compute spherical polygon area using L'Huilier's formula (templated)
 template <typename T>
 T sphericalPolygonAreaT(const std::vector<Eigen::Matrix<T, 3, 1>>& vertices, const T& radius) {
-    using std::acos;
-    using std::tan;
-    using std::atan;
-    using std::sqrt;
-    using std::abs;
-    
     if (vertices.size() < 3) return T(0.0);
     
     T area = T(0.0);
@@ -76,45 +69,14 @@ T sphericalPolygonAreaT(const std::vector<Eigen::Matrix<T, 3, 1>>& vertices, con
         const Eigen::Matrix<T, 3, 1>& c = v[i + 1];
         
         // Use L'Huilier's formula for spherical triangle
-        T cos_la = b.dot(c);
-        T cos_lb = a.dot(c);
-        T cos_lc = a.dot(b);
-        
-        // Clamp to valid range
-        cos_la = (cos_la < T(-1.0)) ? T(-1.0) : ((cos_la > T(1.0)) ? T(1.0) : cos_la);
-        cos_lb = (cos_lb < T(-1.0)) ? T(-1.0) : ((cos_lb > T(1.0)) ? T(1.0) : cos_lb);
-        cos_lc = (cos_lc < T(-1.0)) ? T(-1.0) : ((cos_lc > T(1.0)) ? T(1.0) : cos_lc);
-        
-        T la = acos(cos_la);
-        T lb = acos(cos_lb);
-        T lc = acos(cos_lc);
-        
-        T s = (la + lb + lc) / T(2.0);
-        
-        // L'Huilier's formula
-        T tan_s2 = tan(s / T(2.0));
-        T tan_sla2 = tan((s - la) / T(2.0));
-        T tan_slb2 = tan((s - lb) / T(2.0));
-        T tan_slc2 = tan((s - lc) / T(2.0));
-        
-        T product = tan_s2 * tan_sla2 * tan_slb2 * tan_slc2;
-        
-        // Check for validity
-        if (product > T(0.0)) {
-            T tan_e4 = sqrt(abs(product));
-            T excess = T(4.0) * atan(tan_e4);
-            
-            // Check winding order
-            if (a.dot(b.cross(c)) < T(0.0)) {
-                excess = -excess;
-            }
-            
-            area += excess;
+        T num = (b.cross(c)).dot(a);
+        T denom = T(1.0) + a.dot(b) + b.dot(c) + c.dot(a);
+        if (abs(denom) < T(1e-10)) {
+            continue; // Degenerate triangle
         }
+        T excess = T(2) * atan2(num, denom);
+        area += excess;
     }
-    
-    // Apply correction factor
-    area /= T(3.0);
     
     return area * radius * radius;
 }

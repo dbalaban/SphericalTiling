@@ -1,7 +1,5 @@
 #pragma once
 
-#include "tile_graph.h"
-
 namespace spherical_tiling {
 
 // Weight function types for balancing area vs angle optimization
@@ -17,9 +15,5 @@ enum class WeightFunction {
 // Compute weight for area term given latitude and weight function
 // Returns w_area, where w_angle = 1 - w_area
 double computeAreaWeight(double latitude, WeightFunction func);
-
-// Spatially weighted Ceres optimization that interpolates between equal-area 
-// and equal-angles criteria based on latitude (poles vs equator)
-void optimizeTileGraph(TileGraph& graph, double radius, WeightFunction weightFunc, int maxIterations = 100, bool silent = false);
 
 } // namespace spherical_tiling

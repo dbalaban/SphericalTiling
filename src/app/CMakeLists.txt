@@ -4,32 +4,28 @@ cmake_minimum_required(VERSION 3.15)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/../bin)
 
 # CLI Demo executable
-add_executable(spherical_tiling_demo
-    main.cpp
+add_executable(demo
+    demo.cpp
 )
-
-target_link_libraries(spherical_tiling_demo PRIVATE
+target_link_libraries(demo PRIVATE
     geometric
-    optimization
 )
 
 # Benchmark executable
-add_executable(spherical_tiling_benchmark
-    benchmark.cpp
-)
+# add_executable(spherical_tiling_benchmark
+#     benchmark.cpp
+# )
+# target_link_libraries(spherical_tiling_benchmark PRIVATE
+#     geometric
+#     optimization
+# )
 
-target_link_libraries(spherical_tiling_benchmark PRIVATE
-    geometric
-    optimization
-)
-
-# GUI executable
-add_executable(spherical_tiling_gui
-    gui_main.cpp
-)
-
-target_link_libraries(spherical_tiling_gui PRIVATE
-    geometric
-    optimization
-    visualization
-)
+# # GUI executable
+# add_executable(spherical_tiling_gui
+#     gui_main.cpp
+# )
+# target_link_libraries(spherical_tiling_gui PRIVATE
+#     geometric
+#     optimization
+#     visualization
+# )
