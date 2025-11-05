@@ -110,34 +110,6 @@ void MeshRenderer::setupShaders() {
     colorLocation_ = glGetUniformLocation(shaderProgram_, "uColor");
 }
 
-void MeshRenderer::setPrimalMesh(const std::vector<Eigen::Vector3d>& vertices,
-                                  const std::vector<Eigen::Vector3i>& faces) {
-    // Convert vertices to float array
-    primalVertices_.clear();
-    primalVertices_.reserve(vertices.size() * 3);
-    for (const auto& v : vertices) {
-        primalVertices_.push_back(static_cast<float>(v.x()));
-        primalVertices_.push_back(static_cast<float>(v.y()));
-        primalVertices_.push_back(static_cast<float>(v.z()));
-    }
-    
-    // Convert face indices to line segments (edges)
-    primalIndices_.clear();
-    primalIndices_.reserve(faces.size() * 6);
-    for (const auto& face : faces) {
-        // Three edges per triangle
-        primalIndices_.push_back(face[0]);
-        primalIndices_.push_back(face[1]);
-        primalIndices_.push_back(face[1]);
-        primalIndices_.push_back(face[2]);
-        primalIndices_.push_back(face[2]);
-        primalIndices_.push_back(face[0]);
-    }
-    
-    hasPrimalMesh_ = true;
-    setupPrimalBuffers();
-}
-
 void MeshRenderer::setPrimalMesh(const TileGraph& graph, double radius) {
     primalVertices_.clear();
     primalIndices_.clear();
@@ -167,25 +139,33 @@ void MeshRenderer::setPrimalMesh(const TileGraph& graph, double radius) {
 void MeshRenderer::setDualMesh(const TileGraph& graph, double radius) {
     dualVertices_.clear();
     dualIndices_.clear();
-    
+
     const auto& nodes = graph.getNodes();
-    const auto& edges = graph.getEdges();
-    
-    // Add all node positions as vertices
-    dualVertices_.reserve(nodes.size() * 3);
+
+    size_t count = 0;
+    size_t showN = 2;
     for (const auto& node : nodes) {
-        dualVertices_.push_back(static_cast<float>(node.center.x()));
-        dualVertices_.push_back(static_cast<float>(node.center.y()));
-        dualVertices_.push_back(static_cast<float>(node.center.z()));
+        if (count >= showN) break;
+        // base is the first index of this node's vertices in the global VBO
+        const unsigned int base = static_cast<unsigned int>(dualVertices_.size() / 3);
+
+        // append this node's dual vertices (XYZ per vertex)
+        for (const auto& v : node.dual_vertices) {
+            dualVertices_.push_back(static_cast<float>(v.x()));
+            dualVertices_.push_back(static_cast<float>(v.y()));
+            dualVertices_.push_back(static_cast<float>(v.z()));
+        }
+
+        // append this node's dual edges using LOCAL indices + base
+        // assumes node.dual_edges contains pairs of local vertex indices
+        for (const auto& e : node.dual_edges) {
+            dualIndices_.push_back(base + static_cast<unsigned int>(e[0]));
+            dualIndices_.push_back(base + static_cast<unsigned int>(e[1]));
+        }
+
+        ++count;
     }
-    
-    // Add all edges as line segments
-    dualIndices_.reserve(edges.size() * 2);
-    for (const auto& edge : edges) {
-        dualIndices_.push_back(edge.node1);
-        dualIndices_.push_back(edge.node2);
-    }
-    
+
     hasDualMesh_ = true;
     setupDualBuffers();
 }
