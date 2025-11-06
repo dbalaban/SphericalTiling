@@ -25,10 +25,12 @@ target_include_directories(visualization PUBLIC
 )
 
 find_package(glfw3 REQUIRED)
+find_package(glm REQUIRED)
 
 target_link_libraries(visualization PUBLIC
     geometric
     Eigen3::Eigen
     glfw
     ${CMAKE_DL_LIBS}
+    glm::glm
 )

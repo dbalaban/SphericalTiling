@@ -23,6 +23,7 @@ A C++17 library for geometric tilings of spheres using Goldberg subdivision and 
 ### GUI Dependencies (for spherical_tiling_gui)
 - GLFW 3.x
 - OpenGL 3.3+
+- GLM
 - GLAD (included in third_party/)
 - ImGui (included in third_party/)
 

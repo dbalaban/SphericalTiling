@@ -34,7 +34,7 @@ private:
     float distance_;
     float yaw_;    // horizontal rotation
     float pitch_;  // vertical rotation
-    
+
     // Projection parameters
     float fov_;
     float aspect_;

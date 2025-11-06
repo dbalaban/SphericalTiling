@@ -2,6 +2,7 @@
 #include <iostream>
 #include <cmath>
 #include <stdexcept>
+#include <utility>
 
 namespace spherical_tiling {
 
@@ -30,295 +31,204 @@ void main() {
 )";
 
 MeshRenderer::MeshRenderer() 
-    : shaderProgram_(0), mvpLocation_(-1), colorLocation_(-1),
-      primalVAO_(0), primalVBO_(0), primalEBO_(0), hasPrimalMesh_(false),
-      dualVAO_(0), dualVBO_(0), dualEBO_(0), hasDualMesh_(false),
-      triangleVAO_(0), triangleVBO_(0), triangleEBO_(0), hasTriangleMesh_(false) {
-    setupShaders();
+    : shaderProgram_(0),
+      mvpLocation_(-1),
+      colorLocation_(-1),
+      isIcosahedronVisible_(false),
+      isSubdivisionVisible_(false),
+      isPrimalMeshVisible_(false),
+      isPrimalDebugMeshVisible_(false),
+      isDualMeshVisible_(false),
+      viewsCreated_(false) {
+  setupShaders();
 }
 
 MeshRenderer::~MeshRenderer() {
-    if (primalVAO_) glDeleteVertexArrays(1, &primalVAO_);
-    if (primalVBO_) glDeleteBuffers(1, &primalVBO_);
-    if (primalEBO_) glDeleteBuffers(1, &primalEBO_);
-    if (dualVAO_) glDeleteVertexArrays(1, &dualVAO_);
-    if (dualVBO_) glDeleteBuffers(1, &dualVBO_);
-    if (dualEBO_) glDeleteBuffers(1, &dualEBO_);
-    if (triangleVAO_) glDeleteVertexArrays(1, &triangleVAO_);
-    if (triangleVBO_) glDeleteBuffers(1, &triangleVBO_);
-    if (triangleEBO_) glDeleteBuffers(1, &triangleEBO_);
-    if (shaderProgram_) glDeleteProgram(shaderProgram_);
+  if (shaderProgram_) glDeleteProgram(shaderProgram_);
+}
+
+void MeshRenderer::setMeshConstruct(ConstMeshConstructorPtr mesh) {
+  mesh_ = std::move(mesh);
+  uploadMeshes();
+}
+
+void MeshRenderer::setMeshConstruct(MeshConstructorPtr mesh) {
+  mesh_ = std::const_pointer_cast<const MeshConstructor>(std::move(mesh));
+  uploadMeshes();
+}
+
+void MeshRenderer::createGLMesh(GLMesh& glMesh) {
+  glGenVertexArrays(1, &glMesh.vao);
+  glGenBuffers(1, &glMesh.vbo);
+  glGenBuffers(1, &glMesh.ebo);
+}
+
+void MeshRenderer::setMeshVisibility(MeshType type, bool isVisible) {
+  switch (type) {
+    case ICOSAHEDRON:
+      isIcosahedronVisible_ = isVisible;
+       break;
+    case SUBDIVISION:
+      isSubdivisionVisible_ = isVisible;
+      break;
+    case PRIMAL:
+      isPrimalMeshVisible_ = isVisible;
+      break;
+    case PRIMAL_DEBUG:
+      isPrimalDebugMeshVisible_ = isVisible;
+      break;
+    case DUAL:
+      isDualMeshVisible_ = isVisible;
+      break;
+    default:
+      std::cerr << "Unknown MeshType in setMeshVisibility" << std::endl;
+  }
+}
+
+void MeshRenderer::uploadMeshToGL(const Vertices& V, const Edges& E, GLMesh& glMesh) {
+  if (V.cols()==0 || E.empty()) {
+    glMesh.indexCount = 0;
+    glBindVertexArray(0);
+    return;
+  }
+  glBindVertexArray(glMesh.vao);
+
+  // Upload vertex data
+  Eigen::Matrix3Xf V_float = V.cast<float>();
+  glBindBuffer(GL_ARRAY_BUFFER, glMesh.vbo);
+  glBufferData(GL_ARRAY_BUFFER, V_float.size() * sizeof(float), V_float.data(), GL_STATIC_DRAW);
+
+  // Upload index data
+  std::vector<GLuint> indices;
+  indices.reserve(E.size() * 2);
+  for (const auto& edge : E) {
+    indices.push_back(static_cast<GLuint>(edge(0)));
+    indices.push_back(static_cast<GLuint>(edge(1)));
+  }
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, glMesh.ebo);
+  glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(GLuint), indices.data(), GL_STATIC_DRAW);
+  glMesh.indexCount = static_cast<GLsizei>(indices.size());
+
+  // Set vertex attribute pointers
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*sizeof(float), (void*)0);
+  glEnableVertexAttribArray(0);
+
+  glBindVertexArray(0);
+}
+
+void MeshRenderer::uploadMeshes() {
+  if (!mesh_) {
+    std::cerr << "No mesh data to upload." << std::endl;
+    return;
+  }
+  if (!viewsCreated_) {
+    createGLMesh(icosahedronMesh_);
+    createGLMesh(subdivisionMesh_);
+    createGLMesh(primalMesh_);
+    createGLMesh(primalDebugMesh_);
+    createGLMesh(dualMesh_);
+    viewsCreated_ = true;
+  }
+
+  const Mesh& icosahedron = mesh_->getIcosahedron();
+  const Mesh& subdivision = mesh_->getSubdividedMesh();
+  const Mesh& primal = mesh_->getPrimalMesh();
+  const Mesh& dual = mesh_->getDualMesh();
+
+  uploadMeshToGL(icosahedron.vertices, icosahedron.edges, icosahedronMesh_);
+  uploadMeshToGL(subdivision.vertices, subdivision.edges, subdivisionMesh_);
+  // primal and subdivision edges are held in common, stored in subdivision
+  uploadMeshToGL(primal.vertices, subdivision.edges, primalMesh_);
+  // primal edges store neighborhood rings for debugging purposes
+  uploadMeshToGL(primal.vertices, primal.edges, primalDebugMesh_);
+  uploadMeshToGL(dual.vertices, dual.edges, dualMesh_);
 }
 
 void MeshRenderer::setupShaders() {
-    // Check that OpenGL is initialized
-    if (!glCreateShader) {
-        std::cerr << "ERROR: OpenGL not initialized! glCreateShader function pointer is null." << std::endl;
-        std::cerr << "Make sure GLAD is initialized before creating MeshRenderer." << std::endl;
-        throw std::runtime_error("OpenGL not initialized");
-    }
+  // Check that OpenGL is initialized
+  if (!glCreateShader) {
+    std::cerr << "ERROR: OpenGL not initialized! glCreateShader function pointer is null." << std::endl;
+    std::cerr << "Make sure GLAD is initialized before creating MeshRenderer." << std::endl;
+    throw std::runtime_error("OpenGL not initialized");
+  }
     
-    // Compile vertex shader
-    GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
-    if (vertexShader == 0) {
-        std::cerr << "ERROR: Failed to create vertex shader" << std::endl;
-        throw std::runtime_error("Failed to create vertex shader");
-    }
-    glShaderSource(vertexShader, 1, &vertexShaderSource, nullptr);
-    glCompileShader(vertexShader);
+  // Compile vertex shader
+  GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
+  if (vertexShader == 0) {
+    std::cerr << "ERROR: Failed to create vertex shader" << std::endl;
+    throw std::runtime_error("Failed to create vertex shader");
+  }
+  glShaderSource(vertexShader, 1, &vertexShaderSource, nullptr);
+  glCompileShader(vertexShader);
     
-    // Check for compile errors
-    GLint success;
-    glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
-    if (!success) {
-        char infoLog[512];
-        glGetShaderInfoLog(vertexShader, 512, nullptr, infoLog);
-        std::cerr << "Vertex shader compilation failed:\n" << infoLog << std::endl;
-    }
+  // Check for compile errors
+  GLint success;
+  glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
+  if (!success) {
+    char infoLog[512];
+    glGetShaderInfoLog(vertexShader, 512, nullptr, infoLog);
+    std::cerr << "Vertex shader compilation failed:\n" << infoLog << std::endl;
+  }
     
-    // Compile fragment shader
-    GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(fragmentShader, 1, &fragmentShaderSource, nullptr);
-    glCompileShader(fragmentShader);
+  // Compile fragment shader
+  GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+  glShaderSource(fragmentShader, 1, &fragmentShaderSource, nullptr);
+  glCompileShader(fragmentShader);
     
-    glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
-    if (!success) {
-        char infoLog[512];
-        glGetShaderInfoLog(fragmentShader, 512, nullptr, infoLog);
-        std::cerr << "Fragment shader compilation failed:\n" << infoLog << std::endl;
-    }
+  glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
+  if (!success) {
+    char infoLog[512];
+    glGetShaderInfoLog(fragmentShader, 512, nullptr, infoLog);
+    std::cerr << "Fragment shader compilation failed:\n" << infoLog << std::endl;
+  }
     
-    // Link shader program
-    shaderProgram_ = glCreateProgram();
-    glAttachShader(shaderProgram_, vertexShader);
-    glAttachShader(shaderProgram_, fragmentShader);
-    glLinkProgram(shaderProgram_);
+  // Link shader program
+  shaderProgram_ = glCreateProgram();
+  glAttachShader(shaderProgram_, vertexShader);
+  glAttachShader(shaderProgram_, fragmentShader);
+  glLinkProgram(shaderProgram_);
     
-    glGetProgramiv(shaderProgram_, GL_LINK_STATUS, &success);
-    if (!success) {
-        char infoLog[512];
-        glGetProgramInfoLog(shaderProgram_, 512, nullptr, infoLog);
-        std::cerr << "Shader program linking failed:\n" << infoLog << std::endl;
-    }
+  glGetProgramiv(shaderProgram_, GL_LINK_STATUS, &success);
+  if (!success) {
+    char infoLog[512];
+    glGetProgramInfoLog(shaderProgram_, 512, nullptr, infoLog);
+    std::cerr << "Shader program linking failed:\n" << infoLog << std::endl;
+  }
     
-    // Clean up shaders
-    glDeleteShader(vertexShader);
-    glDeleteShader(fragmentShader);
+  // Clean up shaders
+  glDeleteShader(vertexShader);
+  glDeleteShader(fragmentShader);
     
-    // Get uniform locations
-    mvpLocation_ = glGetUniformLocation(shaderProgram_, "uMVP");
-    colorLocation_ = glGetUniformLocation(shaderProgram_, "uColor");
+  // Get uniform locations
+  mvpLocation_ = glGetUniformLocation(shaderProgram_, "uMVP");
+  colorLocation_ = glGetUniformLocation(shaderProgram_, "uColor");
 }
 
-void MeshRenderer::setPrimalMesh(const TileGraph& graph, double radius) {
-    primalVertices_.clear();
-    primalIndices_.clear();
+void MeshRenderer::renderMesh(const GLMesh& mesh, const glm::mat4& mvpMatrix, const glm::vec3& color) {
+  glUseProgram(shaderProgram_);
     
-    const auto& nodes = graph.getNodes();
-    const auto& edges = graph.getEdges();
+  glUniformMatrix4fv(mvpLocation_, 1, GL_FALSE, &mvpMatrix[0][0]);
+  glUniform3fv(colorLocation_, 1, &color[0]);
     
-    // Add all node positions as vertices
-    primalVertices_.reserve(nodes.size() * 3);
-    for (const auto& node : nodes) {
-        primalVertices_.push_back(static_cast<float>(node.center.x()));
-        primalVertices_.push_back(static_cast<float>(node.center.y()));
-        primalVertices_.push_back(static_cast<float>(node.center.z()));
-    }
-    
-    // Add all edges as line segments
-    primalIndices_.reserve(edges.size() * 2);
-    for (const auto& edge : edges) {
-        primalIndices_.push_back(edge.node1);
-        primalIndices_.push_back(edge.node2);
-    }
-    
-    hasPrimalMesh_ = true;
-    setupPrimalBuffers();
+  glBindVertexArray(mesh.vao);
+  glDrawElements(GL_LINES, mesh.indexCount, GL_UNSIGNED_INT, 0);
+  glBindVertexArray(0);
 }
 
-void MeshRenderer::setDualMesh(const TileGraph& graph, double radius) {
-    dualVertices_.clear();
-    dualIndices_.clear();
-
-    const auto& nodes = graph.getNodes();
-
-    size_t count = 0;
-    size_t showN = 2;
-    for (const auto& node : nodes) {
-        if (count >= showN) break;
-        // base is the first index of this node's vertices in the global VBO
-        const unsigned int base = static_cast<unsigned int>(dualVertices_.size() / 3);
-
-        // append this node's dual vertices (XYZ per vertex)
-        for (const auto& v : node.dual_vertices) {
-            dualVertices_.push_back(static_cast<float>(v.x()));
-            dualVertices_.push_back(static_cast<float>(v.y()));
-            dualVertices_.push_back(static_cast<float>(v.z()));
-        }
-
-        // append this node's dual edges using LOCAL indices + base
-        // assumes node.dual_edges contains pairs of local vertex indices
-        for (const auto& e : node.dual_edges) {
-            dualIndices_.push_back(base + static_cast<unsigned int>(e[0]));
-            dualIndices_.push_back(base + static_cast<unsigned int>(e[1]));
-        }
-
-        ++count;
-    }
-
-    hasDualMesh_ = true;
-    setupDualBuffers();
-}
-
-void MeshRenderer::setupPrimalBuffers() {
-    if (!primalVAO_) {
-        glGenVertexArrays(1, &primalVAO_);
-        glGenBuffers(1, &primalVBO_);
-        glGenBuffers(1, &primalEBO_);
-    }
-    
-    glBindVertexArray(primalVAO_);
-    
-    glBindBuffer(GL_ARRAY_BUFFER, primalVBO_);
-    glBufferData(GL_ARRAY_BUFFER, primalVertices_.size() * sizeof(float),
-                 primalVertices_.data(), GL_STATIC_DRAW);
-    
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, primalEBO_);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, primalIndices_.size() * sizeof(unsigned int),
-                 primalIndices_.data(), GL_STATIC_DRAW);
-    
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-    
-    glBindVertexArray(0);
-}
-
-void MeshRenderer::setupDualBuffers() {
-    if (!dualVAO_) {
-        glGenVertexArrays(1, &dualVAO_);
-        glGenBuffers(1, &dualVBO_);
-        glGenBuffers(1, &dualEBO_);
-    }
-    
-    glBindVertexArray(dualVAO_);
-    
-    glBindBuffer(GL_ARRAY_BUFFER, dualVBO_);
-    glBufferData(GL_ARRAY_BUFFER, dualVertices_.size() * sizeof(float),
-                 dualVertices_.data(), GL_STATIC_DRAW);
-    
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, dualEBO_);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, dualIndices_.size() * sizeof(unsigned int),
-                 dualIndices_.data(), GL_STATIC_DRAW);
-    
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-    
-    glBindVertexArray(0);
-}
-
-void MeshRenderer::renderPrimal(const Eigen::Matrix4f& viewProj, const Eigen::Vector3f& color) {
-    if (!hasPrimalMesh_) return;
-    
-    glUseProgram(shaderProgram_);
-    glUniformMatrix4fv(mvpLocation_, 1, GL_FALSE, viewProj.data());
-    glUniform3f(colorLocation_, color.x(), color.y(), color.z());
-    
-    glBindVertexArray(primalVAO_);
-    glDrawElements(GL_LINES, primalIndices_.size(), GL_UNSIGNED_INT, 0);
-    glBindVertexArray(0);
-}
-
-void MeshRenderer::renderDual(const Eigen::Matrix4f& viewProj, const Eigen::Vector3f& color) {
-    if (!hasDualMesh_) return;
-    
-    glUseProgram(shaderProgram_);
-    glUniformMatrix4fv(mvpLocation_, 1, GL_FALSE, viewProj.data());
-    glUniform3f(colorLocation_, color.x(), color.y(), color.z());
-    
-    glBindVertexArray(dualVAO_);
-    glDrawElements(GL_LINES, dualIndices_.size(), GL_UNSIGNED_INT, 0);
-    glBindVertexArray(0);
-}
-
-void MeshRenderer::clearPrimal() {
-    hasPrimalMesh_ = false;
-    primalVertices_.clear();
-    primalIndices_.clear();
-}
-
-void MeshRenderer::clearDual() {
-    hasDualMesh_ = false;
-    dualVertices_.clear();
-    dualIndices_.clear();
-}
-
-void MeshRenderer::setTriangleMesh(const std::vector<Eigen::Vector3d>& vertices,
-                                    const std::vector<Eigen::Vector3i>& faces) {
-    // Convert vertices to float array
-    triangleVertices_.clear();
-    triangleVertices_.reserve(vertices.size() * 3);
-    for (const auto& v : vertices) {
-        triangleVertices_.push_back(static_cast<float>(v.x()));
-        triangleVertices_.push_back(static_cast<float>(v.y()));
-        triangleVertices_.push_back(static_cast<float>(v.z()));
-    }
-    
-    // Convert face indices to line segments (edges)
-    triangleIndices_.clear();
-    triangleIndices_.reserve(faces.size() * 6);
-    for (const auto& face : faces) {
-        // Three edges per triangle
-        triangleIndices_.push_back(face[0]);
-        triangleIndices_.push_back(face[1]);
-        triangleIndices_.push_back(face[1]);
-        triangleIndices_.push_back(face[2]);
-        triangleIndices_.push_back(face[2]);
-        triangleIndices_.push_back(face[0]);
-    }
-    
-    hasTriangleMesh_ = true;
-    setupTriangleBuffers();
-}
-
-void MeshRenderer::setupTriangleBuffers() {
-    if (!triangleVAO_) {
-        glGenVertexArrays(1, &triangleVAO_);
-        glGenBuffers(1, &triangleVBO_);
-        glGenBuffers(1, &triangleEBO_);
-    }
-    
-    glBindVertexArray(triangleVAO_);
-    
-    glBindBuffer(GL_ARRAY_BUFFER, triangleVBO_);
-    glBufferData(GL_ARRAY_BUFFER, triangleVertices_.size() * sizeof(float),
-                 triangleVertices_.data(), GL_STATIC_DRAW);
-    
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, triangleEBO_);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, triangleIndices_.size() * sizeof(unsigned int),
-                 triangleIndices_.data(), GL_STATIC_DRAW);
-    
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-    
-    glBindVertexArray(0);
-}
-
-void MeshRenderer::renderTriangles(const Eigen::Matrix4f& viewProj, const Eigen::Vector3f& color) {
-    if (!hasTriangleMesh_) return;
-    
-    glUseProgram(shaderProgram_);
-    glUniformMatrix4fv(mvpLocation_, 1, GL_FALSE, viewProj.data());
-    glUniform3f(colorLocation_, color.x(), color.y(), color.z());
-    
-    glBindVertexArray(triangleVAO_);
-    glDrawElements(GL_LINES, triangleIndices_.size(), GL_UNSIGNED_INT, 0);
-    glBindVertexArray(0);
-}
-
-void MeshRenderer::clearTriangles() {
-    hasTriangleMesh_ = false;
-    triangleVertices_.clear();
-    triangleIndices_.clear();
-}
-
+void MeshRenderer::renderAllMeshes(const glm::mat4& mvpMatrix) {
+  if (isIcosahedronVisible_) {
+    renderMesh(icosahedronMesh_, mvpMatrix, cIco);
+  }
+  if (isSubdivisionVisible_) {
+    renderMesh(subdivisionMesh_, mvpMatrix, cSub);
+  }
+  if (isPrimalMeshVisible_) {
+    renderMesh(primalMesh_, mvpMatrix, cPN);
+  }
+  if (isPrimalDebugMeshVisible_) {
+    renderMesh(primalDebugMesh_, mvpMatrix, cPD);
+  }
+  if (isDualMeshVisible_) {
+    renderMesh(dualMesh_, mvpMatrix, cDual);
+  }
 } // namespace spherical_tiling

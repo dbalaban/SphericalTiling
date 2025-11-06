@@ -3,72 +3,97 @@
 #include <Eigen/Dense>
 #include <vector>
 #include <glad/gl.h>
+#include <glm/glm.hpp>
+
+#include "mesh_construction.h"
 
 namespace spherical_tiling {
 
+enum MeshType {
+  ICOSAHEDRON,
+  SUBDIVISION,
+  PRIMAL,
+  PRIMAL_DEBUG,
+  DUAL
+};
+
+struct GLMesh {
+  GLuint vao=0, vbo=0, ebo=0;
+  GLsizei indexCount=0;
+
+  GLMesh() = default;
+  GLMesh(const GLMesh&) = delete;
+  GLMesh& operator=(const GLMesh&) = delete;
+
+  GLMesh(GLMesh&& o) noexcept { *this = std::move(o); }
+  GLMesh& operator=(GLMesh&& o) noexcept {
+    if (this == &o) return *this;
+    destroy();
+    vao=o.vao; vbo=o.vbo; ebo=o.ebo; indexCount=o.indexCount;
+    o.vao=o.vbo=o.ebo=0; o.indexCount=0;
+    return *this;
+  }
+
+  ~GLMesh(){ destroy(); }
+  void destroy(){
+    if (vao) glDeleteVertexArrays(1,&vao);
+    if (vbo) glDeleteBuffers(1,&vbo);
+    if (ebo) glDeleteBuffers(1,&ebo);
+    vao=vbo=ebo=0; indexCount=0;
+  }
+};
+
 class MeshRenderer {
 public:
-    MeshRenderer();
-    ~MeshRenderer();
+  MeshRenderer();
+  ~MeshRenderer();
     
-    // Set mesh data for primal (triangular) mesh
-    void setPrimalMesh(const std::vector<Eigen::Vector3d>& vertices,
-                       const std::vector<Eigen::Vector3i>& faces);
+  // Set mesh data for primal (triangular) mesh
+  void setMeshConstruct(ConstMeshConstructorPtr mesh);
+  void setMeshConstruct(MeshConstructorPtr mesh);
     
-    // Set mesh data for primal mesh from TileGraph (adjacency graph)
-    void setPrimalMesh(const TileGraph& graph, double radius);
-    
-    // Set mesh data for dual (Voronoi) mesh from TileGraph
-    void setDualMesh(const TileGraph& graph, double radius);
-    
-    // Set mesh data for triangle mesh (subdivision face edges)
-    void setTriangleMesh(const std::vector<Eigen::Vector3d>& vertices,
-                         const std::vector<Eigen::Vector3i>& faces);
-    
-    // Render meshes
-    void renderPrimal(const Eigen::Matrix4f& viewProj, const Eigen::Vector3f& color);
-    void renderDual(const Eigen::Matrix4f& viewProj, const Eigen::Vector3f& color);
-    void renderTriangles(const Eigen::Matrix4f& viewProj, const Eigen::Vector3f& color);
-    
-    // Clear mesh data
-    void clearPrimal();
-    void clearDual();
-    void clearTriangles();
+  // Render meshes
+  void renderMesh(const GLMesh& mesh, const glm::mat4& mvpMatrix, const glm::vec3& color);
+  void renderAllMeshes(const glm::mat4& mvpMatrix);
+
+  // Clear mesh data
+  void setMeshVisibility(MeshType type, bool isVisible);
     
 private:
-    void setupShaders();
-    void setupPrimalBuffers();
-    void setupDualBuffers();
-    void setupTriangleBuffers();
+  void setupShaders();
+
+  void createGLMesh(GLMesh& glMesh);
+  void uploadMeshToGL(const Vertices& V, const Edges& E, GLMesh& glMesh);
+  void uploadMeshes();
+
+  ConstMeshConstructorPtr mesh_;
     
-    // Shader program
-    GLuint shaderProgram_;
-    GLint mvpLocation_;
-    GLint colorLocation_;
-    
-    // Primal mesh data
-    std::vector<float> primalVertices_;
-    std::vector<unsigned int> primalIndices_;
-    GLuint primalVAO_;
-    GLuint primalVBO_;
-    GLuint primalEBO_;
-    bool hasPrimalMesh_;
-    
-    // Dual mesh data (edges only)
-    std::vector<float> dualVertices_;
-    std::vector<unsigned int> dualIndices_;
-    GLuint dualVAO_;
-    GLuint dualVBO_;
-    GLuint dualEBO_;
-    bool hasDualMesh_;
-    
-    // Triangle mesh data (edges only)
-    std::vector<float> triangleVertices_;
-    std::vector<unsigned int> triangleIndices_;
-    GLuint triangleVAO_;
-    GLuint triangleVBO_;
-    GLuint triangleEBO_;
-    bool hasTriangleMesh_;
+  // Shader program
+  GLuint shaderProgram_;
+  GLint mvpLocation_;
+  GLint colorLocation_;
+
+  // GL Meshes
+  GLMesh icosahedronMesh_;
+  GLMesh subdivisionMesh_;
+  GLMesh primalMesh_;
+  GLMesh primalDebugMesh_;
+  GLMesh dualMesh_;
+
+  glm::vec3 cIco{0.9f,0.8f,0.2f};
+  glm::vec3 cSub{0.1f,0.7f,0.9f};
+  glm::vec3 cPN{0.9f,0.2f,0.2f};
+  glm::vec3 cPD{0.9f,0.4f,0.9f};
+  glm::vec3 cDual{0.1f,0.1f,0.1f}; 
+
+  bool viewsCreated_;
+
+  bool isIcosahedronVisible_;
+  bool isSubdivisionVisible_;
+  bool isPrimalMeshVisible_;
+  bool isPrimalDebugMeshVisible_;
+  bool isDualMeshVisible_;
+
 };
 
 } // namespace spherical_tiling

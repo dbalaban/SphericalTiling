@@ -1,4 +1,16 @@
+#pragma once
+
 #include "templated_geometry.h"
+
+#include <memory>
+
+struct Mesh;
+class MeshConstructor;
+
+typedef std::shared_ptr<Mesh> MeshPtr;
+typedef std::shared_ptr<const Mesh> ConstMeshPtr;
+typedef std::shared_ptr<MeshConstructor> MeshConstructorPtr;
+typedef std::shared_ptr<const MeshConstructor> ConstMeshConstructorPtr;
 
 typedef Eigen::Vector3d Vertex;
 // list of vertex indices, ccw ordered
