@@ -34,11 +34,6 @@ MeshRenderer::MeshRenderer()
     : shaderProgram_(0),
       mvpLocation_(-1),
       colorLocation_(-1),
-      isIcosahedronVisible_(false),
-      isSubdivisionVisible_(false),
-      isPrimalMeshVisible_(false),
-      isPrimalDebugMeshVisible_(false),
-      isDualMeshVisible_(false),
       viewsCreated_(false) {
   setupShaders();
 }
@@ -61,28 +56,6 @@ void MeshRenderer::createGLMesh(GLMesh& glMesh) {
   glGenVertexArrays(1, &glMesh.vao);
   glGenBuffers(1, &glMesh.vbo);
   glGenBuffers(1, &glMesh.ebo);
-}
-
-void MeshRenderer::setMeshVisibility(MeshType type, bool isVisible) {
-  switch (type) {
-    case ICOSAHEDRON:
-      isIcosahedronVisible_ = isVisible;
-       break;
-    case SUBDIVISION:
-      isSubdivisionVisible_ = isVisible;
-      break;
-    case PRIMAL:
-      isPrimalMeshVisible_ = isVisible;
-      break;
-    case PRIMAL_DEBUG:
-      isPrimalDebugMeshVisible_ = isVisible;
-      break;
-    case DUAL:
-      isDualMeshVisible_ = isVisible;
-      break;
-    default:
-      std::cerr << "Unknown MeshType in setMeshVisibility" << std::endl;
-  }
 }
 
 void MeshRenderer::uploadMeshToGL(const Vertices& V, const Edges& E, GLMesh& glMesh) {
@@ -168,6 +141,7 @@ void MeshRenderer::setupShaders() {
     char infoLog[512];
     glGetShaderInfoLog(vertexShader, 512, nullptr, infoLog);
     std::cerr << "Vertex shader compilation failed:\n" << infoLog << std::endl;
+    throw std::runtime_error("Vertex shader compilation failed");
   }
     
   // Compile fragment shader
@@ -215,20 +189,21 @@ void MeshRenderer::renderMesh(const GLMesh& mesh, const glm::mat4& mvpMatrix, co
   glBindVertexArray(0);
 }
 
-void MeshRenderer::renderAllMeshes(const glm::mat4& mvpMatrix) {
-  if (isIcosahedronVisible_) {
+void MeshRenderer::renderAllMeshes(const glm::mat4& mvpMatrix, const Visibility& vis) {
+  if (vis.isIcosahedronVisible_) {
     renderMesh(icosahedronMesh_, mvpMatrix, cIco);
   }
-  if (isSubdivisionVisible_) {
+  if (vis.isSubdivisionVisible_) {
     renderMesh(subdivisionMesh_, mvpMatrix, cSub);
   }
-  if (isPrimalMeshVisible_) {
+  if (vis.isPrimalMeshVisible_) {
     renderMesh(primalMesh_, mvpMatrix, cPN);
   }
-  if (isPrimalDebugMeshVisible_) {
+  if (vis.isPrimalDebugMeshVisible_) {
     renderMesh(primalDebugMesh_, mvpMatrix, cPD);
   }
-  if (isDualMeshVisible_) {
+  if (vis.isDualMeshVisible_) {
     renderMesh(dualMesh_, mvpMatrix, cDual);
   }
+}
 } // namespace spherical_tiling

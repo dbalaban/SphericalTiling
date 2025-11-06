@@ -17,6 +17,14 @@ enum MeshType {
   DUAL
 };
 
+struct Visibility {
+  bool isIcosahedronVisible_;
+  bool isSubdivisionVisible_;
+  bool isPrimalMeshVisible_;
+  bool isPrimalDebugMeshVisible_;
+  bool isDualMeshVisible_;
+};
+
 struct GLMesh {
   GLuint vao=0, vbo=0, ebo=0;
   GLsizei indexCount=0;
@@ -54,17 +62,14 @@ public:
     
   // Render meshes
   void renderMesh(const GLMesh& mesh, const glm::mat4& mvpMatrix, const glm::vec3& color);
-  void renderAllMeshes(const glm::mat4& mvpMatrix);
-
-  // Clear mesh data
-  void setMeshVisibility(MeshType type, bool isVisible);
+  void renderAllMeshes(const glm::mat4& mvpMatrix, const Visibility& vis);
     
 private:
   void setupShaders();
 
   void createGLMesh(GLMesh& glMesh);
-  void uploadMeshToGL(const Vertices& V, const Edges& E, GLMesh& glMesh);
   void uploadMeshes();
+  void uploadMeshToGL(const Vertices& V, const Edges& E, GLMesh& glMesh);
 
   ConstMeshConstructorPtr mesh_;
     
@@ -87,13 +92,6 @@ private:
   glm::vec3 cDual{0.1f,0.1f,0.1f}; 
 
   bool viewsCreated_;
-
-  bool isIcosahedronVisible_;
-  bool isSubdivisionVisible_;
-  bool isPrimalMeshVisible_;
-  bool isPrimalDebugMeshVisible_;
-  bool isDualMeshVisible_;
-
 };
 
 } // namespace spherical_tiling
