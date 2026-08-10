@@ -94,13 +94,38 @@ struct GLColorMesh {
 
 struct TileVisual {
   Eigen::Vector3f baseColor;
-  float waterBlend = 0.0f;
-  float luminanceBias = 0.0f;
-  float contrast = 1.0f;
-  float edgeDarkening = 0.12f;
-  float noiseScale = 3.0f;
-  float noiseAmplitude = 0.08f;
-  float seed = 0.0f;
+  int atlasIndex = -1;
+  Eigen::Vector2f atlasUvMin = Eigen::Vector2f::Zero();
+  Eigen::Vector2f atlasUvMax = Eigen::Vector2f::Ones();
+};
+
+struct GLAtlasMesh {
+  GLuint vao=0, vbo=0, uvbo=0, abo=0, cbo=0, ebo=0;
+  GLsizei indexCount=0;
+
+  GLAtlasMesh() = default;
+  GLAtlasMesh(const GLAtlasMesh&) = delete;
+  GLAtlasMesh& operator=(const GLAtlasMesh&) = delete;
+
+  GLAtlasMesh(GLAtlasMesh&& o) noexcept { *this = std::move(o); }
+  GLAtlasMesh& operator=(GLAtlasMesh&& o) noexcept {
+    if (this == &o) return *this;
+    destroy();
+    vao=o.vao; vbo=o.vbo; uvbo=o.uvbo; abo=o.abo; cbo=o.cbo; ebo=o.ebo; indexCount=o.indexCount;
+    o.vao=o.vbo=o.uvbo=o.abo=o.cbo=o.ebo=0; o.indexCount=0;
+    return *this;
+  }
+
+  ~GLAtlasMesh(){ destroy(); }
+  void destroy(){
+    if (vao) glDeleteVertexArrays(1,&vao);
+    if (vbo) glDeleteBuffers(1,&vbo);
+    if (uvbo) glDeleteBuffers(1,&uvbo);
+    if (abo) glDeleteBuffers(1,&abo);
+    if (cbo) glDeleteBuffers(1,&cbo);
+    if (ebo) glDeleteBuffers(1,&ebo);
+    vao=vbo=uvbo=abo=cbo=ebo=0; indexCount=0;
+  }
 };
 
 struct GLTexturedMesh {
@@ -149,6 +174,7 @@ public:
   // Render meshes
   void renderMesh(const GLMesh& mesh, const glm::mat4& mvpMatrix, const glm::vec3& color);
   void renderColoredMesh(const GLColorMesh& mesh, const glm::mat4& mvpMatrix, float shadingStrength);
+  void renderAtlasMesh(const GLAtlasMesh& mesh, const glm::mat4& mvpMatrix);
   void renderTexturedMesh(const GLTexturedMesh& mesh, const glm::mat4& mvpMatrix);
   void renderAllMeshes(const glm::mat4& mvpMatrix, const Visibility& vis, const Eigen::Vector3f& cameraPosition, float morphFactor);
     
@@ -157,21 +183,26 @@ private:
 
   void createGLMesh(GLMesh& glMesh);
   void createGLColorMesh(GLColorMesh& glMesh);
+  void createGLAtlasMesh(GLAtlasMesh& glMesh);
   void createGLTexturedMesh(GLTexturedMesh& glMesh);
   void uploadMeshes();
   void uploadMeshToGL(const Vertices& V, const Edges& E, GLMesh& glMesh);
   void uploadColorMeshToGL(const std::vector<Eigen::Vector3f>& positions,
                            const std::vector<Eigen::Vector3f>& colors,
-                           const std::vector<Eigen::Vector2f>& localCoords,
-                           const std::vector<Eigen::Vector4f>& paramsA,
-                           const std::vector<Eigen::Vector4f>& paramsB,
                            const std::vector<GLuint>& indices,
                            GLColorMesh& glMesh);
+  void uploadAtlasMeshToGL(const std::vector<Eigen::Vector3f>& positions,
+                           const std::vector<Eigen::Vector2f>& atlasUvs,
+                           const std::vector<float>& atlasIndices,
+                           const std::vector<Eigen::Vector3f>& fallbackColors,
+                           const std::vector<GLuint>& indices,
+                           GLAtlasMesh& glMesh);
   void uploadTexturedMeshToGL(const std::vector<Eigen::Vector3f>& positions,
                               const std::vector<Eigen::Vector2f>& uvs,
                               const std::vector<GLuint>& indices,
                               GLTexturedMesh& glMesh);
   void buildEarthMesh();
+  void buildEarthAtlasMesh();
   void buildEarthSurfaceMesh();
   void bakeDualCellColors();
   Eigen::Vector3f sampleDualFaceColor(const Face& face) const;
@@ -179,6 +210,8 @@ private:
   float smoothstep(float edge0, float edge1, float value) const;
   void applyMorphUniforms(GLuint program, const glm::mat4& mvpMatrix, const Eigen::Vector3f& cameraPosition, float morphFactor) const;
   void uploadEarthTextureToGL();
+  Eigen::Vector3f sampleEarthAtDirection(const Eigen::Vector3f& direction) const;
+  void rebuildEarthTileAtlases();
 
   ConstMeshConstructorPtr mesh_;
   EarthTexture earthTexture_;
@@ -190,14 +223,17 @@ private:
   // Shader program
   GLuint shaderProgram_;
   GLuint colorShaderProgram_;
+  GLuint atlasShaderProgram_;
   GLuint texturedShaderProgram_;
   GLuint earthTextureId_;
+  std::vector<GLuint> earthTileAtlasIds_;
   GLint mvpLocation_;
   GLint colorLocation_;
   GLint colorMvpLocation_;
-  GLint colorShadingStrengthLocation_;
-  GLint colorLightDirLocation_;
-  GLint colorGeneratedModeLocation_;
+  GLint atlasMvpLocation_;
+  GLint atlasSamplerLocations_[8];
+  GLint atlasTextureCountLocation_;
+  GLint atlasLightDirLocation_;
   GLint texturedMvpLocation_;
   GLint morphMvpLocation_;
   GLint morphFactorLocation_;
@@ -214,6 +250,13 @@ private:
   GLint colorMorphRadiusLocation_;
   GLint colorMorphStartAngleLocation_;
   GLint colorMorphEndAngleLocation_;
+  GLint atlasMorphFactorLocation_;
+  GLint atlasMorphAnchorLocation_;
+  GLint atlasMorphEastLocation_;
+  GLint atlasMorphNorthLocation_;
+  GLint atlasMorphRadiusLocation_;
+  GLint atlasMorphStartAngleLocation_;
+  GLint atlasMorphEndAngleLocation_;
   GLint texturedMorphFactorLocation_;
   GLint texturedMorphAnchorLocation_;
   GLint texturedMorphEastLocation_;
@@ -232,6 +275,7 @@ private:
   GLMesh primalDebugMesh_;
   GLMesh dualMesh_;
   GLColorMesh earthMesh_;
+  GLAtlasMesh earthAtlasMesh_;
   GLTexturedMesh earthSurfaceMesh_;
 
   glm::vec3 cIco{0.9f,0.8f,0.2f};

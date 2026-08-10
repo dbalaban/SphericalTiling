@@ -14,6 +14,11 @@ namespace {
 constexpr double kPiD = 3.14159265358979323846;
 constexpr float kMorphStartAngle = 0.20f;
 constexpr float kMorphEndAngle = 1.60f;
+constexpr int kTileTextureResolution = 32;
+constexpr int kTileTexturePadding = 1;
+constexpr int kTileTextureStride = kTileTextureResolution + 2 * kTileTexturePadding;
+constexpr int kTileAtlasSize = 4096;
+constexpr int kMaxTileAtlases = 8;
 
 double unwrapLongitude(double lon, double reference) {
   while (lon - reference > kPiD) {
@@ -74,9 +79,6 @@ static const char* colorVertexShaderSource = R"(
 #version 330 core
 layout (location = 0) in vec3 aPos;
 layout (location = 1) in vec3 aColor;
-layout (location = 2) in vec2 aLocalCoord;
-layout (location = 3) in vec4 aParamsA;
-layout (location = 4) in vec4 aParamsB;
 
 uniform mat4 uMVP;
 uniform float uMorphFactor;
@@ -89,9 +91,6 @@ uniform float uMorphEndAngle;
 
 out vec3 vColor;
 out vec3 vNormal;
-out vec2 vLocalCoord;
-out vec4 vParamsA;
-out vec4 vParamsB;
 
 vec3 morphPosition(vec3 spherical) {
     vec3 unit = normalize(spherical);
@@ -109,9 +108,6 @@ void main() {
     gl_Position = uMVP * vec4(morphPosition(aPos), 1.0);
     vColor = aColor;
     vNormal = normalize(aPos);
-    vLocalCoord = aLocalCoord;
-    vParamsA = aParamsA;
-    vParamsB = aParamsB;
 }
 )";
 
@@ -119,75 +115,88 @@ static const char* colorFragmentShaderSource = R"(
 #version 330 core
 in vec3 vColor;
 in vec3 vNormal;
-in vec2 vLocalCoord;
-in vec4 vParamsA;
-in vec4 vParamsB;
 out vec4 FragColor;
 
 uniform float uShadingStrength;
 uniform vec3 uLightDir;
-uniform int uGeneratedMode;
-
-float hash12(vec2 p) {
-    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
-    p3 += dot(p3, p3.yzx + 33.33);
-    return fract((p3.x + p3.y) * p3.z);
-}
-
-float valueNoise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-    vec2 u = f * f * (3.0 - 2.0 * f);
-    float a = hash12(i);
-    float b = hash12(i + vec2(1.0, 0.0));
-    float c = hash12(i + vec2(0.0, 1.0));
-    float d = hash12(i + vec2(1.0, 1.0));
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-}
-
-float fbm(vec2 p) {
-    float sum = 0.0;
-    float amplitude = 0.5;
-    float frequency = 1.0;
-    for (int i = 0; i < 4; ++i) {
-        sum += amplitude * valueNoise(p * frequency);
-        frequency *= 2.03;
-        amplitude *= 0.5;
-    }
-    return sum;
-}
 
 void main() {
     float lambert = max(dot(normalize(vNormal), normalize(uLightDir)), 0.0);
     float shade = mix(1.0, 0.72 + 0.28 * lambert, uShadingStrength);
-    vec3 color = vColor;
-    if (uGeneratedMode != 0) {
-        float waterBlend = vParamsA.x;
-        float luminanceBias = vParamsA.y;
-        float contrast = vParamsA.z;
-        float edgeDarkening = vParamsA.w;
-        float noiseScale = vParamsB.x;
-        float noiseAmplitude = vParamsB.y;
-        float seed = vParamsB.z;
+    FragColor = vec4(vColor * shade, 1.0);
+}
+)";
 
-        vec2 centered = vLocalCoord;
-        float radius = length(centered);
-        float edge = smoothstep(0.72, 1.0, radius);
-        vec2 warped = centered * noiseScale + vec2(seed, seed * 0.618);
-        float coarse = fbm(warped);
-        float fine = fbm(warped * 2.4 + vec2(3.1, -1.7));
-        float ridges = 1.0 - abs(2.0 * coarse - 1.0);
-        float contour = smoothstep(0.35, 0.85, sin((centered.x + centered.y) * 8.0 + seed * 6.28318) * 0.5 + 0.5);
-        float signedNoise = (fine - 0.5) * 2.0;
-        float landDetail = mix(contour * 0.04 + ridges * 0.14, coarse * 0.05, waterBlend);
-        float variation = signedNoise * noiseAmplitude + landDetail;
-        color = color + vec3(variation);
-        color = mix(color, color * vec3(0.92, 0.98, 1.05), waterBlend * 0.35);
-        color = mix(color, color * vec3(1.04, 1.01, 0.96), (1.0 - waterBlend) * 0.25);
-        color = (color - vec3(0.5)) * contrast + vec3(0.5 + luminanceBias);
-        color *= 1.0 - edge * edgeDarkening;
-        color = clamp(color, 0.0, 1.0);
-    }
+static const char* atlasVertexShaderSource = R"(
+#version 330 core
+layout (location = 0) in vec3 aPos;
+layout (location = 1) in vec2 aUv;
+layout (location = 2) in float aAtlasIndex;
+layout (location = 3) in vec3 aFallbackColor;
+
+uniform mat4 uMVP;
+uniform float uMorphFactor;
+uniform vec3 uMorphAnchor;
+uniform vec3 uMorphEast;
+uniform vec3 uMorphNorth;
+uniform float uSphereRadius;
+uniform float uMorphStartAngle;
+uniform float uMorphEndAngle;
+
+out vec2 vUv;
+out vec3 vNormal;
+out vec3 vFallbackColor;
+flat out int vAtlasIndex;
+
+vec3 morphPosition(vec3 spherical) {
+    vec3 unit = normalize(spherical);
+    float anchorDot = clamp(dot(unit, uMorphAnchor), -1.0, 1.0);
+    float angle = acos(anchorDot);
+    float locality = 1.0 - smoothstep(uMorphStartAngle, uMorphEndAngle, angle);
+    float blend = uMorphFactor * locality;
+    float x = uSphereRadius * asin(clamp(dot(unit, uMorphEast), -1.0, 1.0));
+    float y = uSphereRadius * asin(clamp(dot(unit, uMorphNorth), -1.0, 1.0));
+    vec3 planar = uMorphAnchor * uSphereRadius + uMorphEast * x + uMorphNorth * y;
+    return mix(spherical, planar, blend);
+}
+
+void main() {
+    gl_Position = uMVP * vec4(morphPosition(aPos), 1.0);
+    vUv = aUv;
+    vNormal = normalize(aPos);
+    vFallbackColor = aFallbackColor;
+    vAtlasIndex = int(aAtlasIndex + 0.5);
+}
+)";
+
+static const char* atlasFragmentShaderSource = R"(
+#version 330 core
+in vec2 vUv;
+in vec3 vNormal;
+in vec3 vFallbackColor;
+flat in int vAtlasIndex;
+out vec4 FragColor;
+
+uniform sampler2D uAtlasTextures[8];
+uniform int uAtlasTextureCount;
+uniform vec3 uLightDir;
+
+vec3 sampleAtlas(int atlasIndex, vec2 uv) {
+    if (atlasIndex == 0) return texture(uAtlasTextures[0], uv).rgb;
+    if (atlasIndex == 1) return texture(uAtlasTextures[1], uv).rgb;
+    if (atlasIndex == 2) return texture(uAtlasTextures[2], uv).rgb;
+    if (atlasIndex == 3) return texture(uAtlasTextures[3], uv).rgb;
+    if (atlasIndex == 4) return texture(uAtlasTextures[4], uv).rgb;
+    if (atlasIndex == 5) return texture(uAtlasTextures[5], uv).rgb;
+    if (atlasIndex == 6) return texture(uAtlasTextures[6], uv).rgb;
+    if (atlasIndex == 7) return texture(uAtlasTextures[7], uv).rgb;
+    return vFallbackColor;
+}
+
+void main() {
+    vec3 color = (vAtlasIndex >= 0 && vAtlasIndex < uAtlasTextureCount) ? sampleAtlas(vAtlasIndex, vUv) : vFallbackColor;
+    float lambert = max(dot(normalize(vNormal), normalize(uLightDir)), 0.0);
+    float shade = 0.72 + 0.28 * lambert;
     FragColor = vec4(color * shade, 1.0);
 }
 )";
@@ -245,14 +254,15 @@ MeshRenderer::MeshRenderer()
     : performanceMode_(PerformanceMode::Balanced),
       shaderProgram_(0),
       colorShaderProgram_(0),
+      atlasShaderProgram_(0),
       texturedShaderProgram_(0),
       earthTextureId_(0),
       mvpLocation_(-1),
       colorLocation_(-1),
       colorMvpLocation_(-1),
-      colorShadingStrengthLocation_(-1),
-      colorLightDirLocation_(-1),
-      colorGeneratedModeLocation_(-1),
+      atlasMvpLocation_(-1),
+      atlasTextureCountLocation_(-1),
+      atlasLightDirLocation_(-1),
       texturedMvpLocation_(-1),
       morphMvpLocation_(-1),
       morphFactorLocation_(-1),
@@ -269,6 +279,13 @@ MeshRenderer::MeshRenderer()
       colorMorphRadiusLocation_(-1),
       colorMorphStartAngleLocation_(-1),
       colorMorphEndAngleLocation_(-1),
+      atlasMorphFactorLocation_(-1),
+      atlasMorphAnchorLocation_(-1),
+      atlasMorphEastLocation_(-1),
+      atlasMorphNorthLocation_(-1),
+      atlasMorphRadiusLocation_(-1),
+      atlasMorphStartAngleLocation_(-1),
+      atlasMorphEndAngleLocation_(-1),
       texturedMorphFactorLocation_(-1),
       texturedMorphAnchorLocation_(-1),
       texturedMorphEastLocation_(-1),
@@ -280,14 +297,19 @@ MeshRenderer::MeshRenderer()
       texturedUseTextureLocation_(-1),
       texturedFallbackColorLocation_(-1),
       viewsCreated_(false) {
+  std::fill(std::begin(atlasSamplerLocations_), std::end(atlasSamplerLocations_), -1);
   setupShaders();
 }
 
 MeshRenderer::~MeshRenderer() {
   if (shaderProgram_) glDeleteProgram(shaderProgram_);
   if (colorShaderProgram_) glDeleteProgram(colorShaderProgram_);
+  if (atlasShaderProgram_) glDeleteProgram(atlasShaderProgram_);
   if (texturedShaderProgram_) glDeleteProgram(texturedShaderProgram_);
   if (earthTextureId_) glDeleteTextures(1, &earthTextureId_);
+  if (!earthTileAtlasIds_.empty()) {
+    glDeleteTextures(static_cast<GLsizei>(earthTileAtlasIds_.size()), earthTileAtlasIds_.data());
+  }
 }
 
 void MeshRenderer::setMeshConstruct(ConstMeshConstructorPtr mesh) {
@@ -326,8 +348,15 @@ void MeshRenderer::createGLColorMesh(GLColorMesh& glMesh) {
   glGenVertexArrays(1, &glMesh.vao);
   glGenBuffers(1, &glMesh.vbo);
   glGenBuffers(1, &glMesh.cbo);
-  glGenBuffers(1, &glMesh.lbo);
-  glGenBuffers(1, &glMesh.pbo);
+  glGenBuffers(1, &glMesh.ebo);
+}
+
+void MeshRenderer::createGLAtlasMesh(GLAtlasMesh& glMesh) {
+  glGenVertexArrays(1, &glMesh.vao);
+  glGenBuffers(1, &glMesh.vbo);
+  glGenBuffers(1, &glMesh.uvbo);
+  glGenBuffers(1, &glMesh.abo);
+  glGenBuffers(1, &glMesh.cbo);
   glGenBuffers(1, &glMesh.ebo);
 }
 
@@ -383,12 +412,9 @@ void MeshRenderer::uploadMeshToGL(const Vertices& V, const Edges& E, GLMesh& glM
 
 void MeshRenderer::uploadColorMeshToGL(const std::vector<Eigen::Vector3f>& positions,
                                        const std::vector<Eigen::Vector3f>& colors,
-                                       const std::vector<Eigen::Vector2f>& localCoords,
-                                       const std::vector<Eigen::Vector4f>& paramsA,
-                                       const std::vector<Eigen::Vector4f>& paramsB,
                                        const std::vector<GLuint>& indices,
                                        GLColorMesh& glMesh) {
-  if (positions.empty() || colors.empty() || localCoords.empty() || paramsA.empty() || paramsB.empty() || indices.empty()) {
+  if (positions.empty() || colors.empty() || indices.empty()) {
     glMesh.indexCount = 0;
     glBindVertexArray(0);
     return;
@@ -412,32 +438,52 @@ void MeshRenderer::uploadColorMeshToGL(const std::vector<Eigen::Vector3f>& posit
   glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Eigen::Vector3f), (void*)0);
   glEnableVertexAttribArray(1);
 
-  glBindBuffer(GL_ARRAY_BUFFER, glMesh.lbo);
-  glBufferData(GL_ARRAY_BUFFER,
-               static_cast<GLsizeiptr>(localCoords.size() * sizeof(Eigen::Vector2f)),
-               localCoords.data(),
-               GL_STATIC_DRAW);
-  glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Eigen::Vector2f), (void*)0);
-  glEnableVertexAttribArray(2);
-
-  glBindBuffer(GL_ARRAY_BUFFER, glMesh.pbo);
-  const std::size_t paramsSize = paramsA.size() * sizeof(Eigen::Vector4f);
-  glBufferData(GL_ARRAY_BUFFER,
-               static_cast<GLsizeiptr>(paramsSize * 2),
-               nullptr,
-               GL_STATIC_DRAW);
-  glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(paramsSize), paramsA.data());
-  glBufferSubData(GL_ARRAY_BUFFER, static_cast<GLintptr>(paramsSize), static_cast<GLsizeiptr>(paramsSize), paramsB.data());
-  glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, sizeof(Eigen::Vector4f), (void*)0);
-  glEnableVertexAttribArray(3);
-  glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, sizeof(Eigen::Vector4f), reinterpret_cast<void*>(static_cast<uintptr_t>(paramsSize)));
-  glEnableVertexAttribArray(4);
-
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, glMesh.ebo);
   glBufferData(GL_ELEMENT_ARRAY_BUFFER,
                static_cast<GLsizeiptr>(indices.size() * sizeof(GLuint)),
                indices.data(),
                GL_STATIC_DRAW);
+  glMesh.indexCount = static_cast<GLsizei>(indices.size());
+
+  glBindVertexArray(0);
+}
+
+void MeshRenderer::uploadAtlasMeshToGL(const std::vector<Eigen::Vector3f>& positions,
+                                       const std::vector<Eigen::Vector2f>& atlasUvs,
+                                       const std::vector<float>& atlasIndices,
+                                       const std::vector<Eigen::Vector3f>& fallbackColors,
+                                       const std::vector<GLuint>& indices,
+                                       GLAtlasMesh& glMesh) {
+  if (positions.empty() || atlasUvs.empty() || atlasIndices.empty() || fallbackColors.empty() || indices.empty()) {
+    glMesh.indexCount = 0;
+    glBindVertexArray(0);
+    return;
+  }
+
+  glBindVertexArray(glMesh.vao);
+
+  glBindBuffer(GL_ARRAY_BUFFER, glMesh.vbo);
+  glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(positions.size() * sizeof(Eigen::Vector3f)), positions.data(), GL_STATIC_DRAW);
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Eigen::Vector3f), (void*)0);
+  glEnableVertexAttribArray(0);
+
+  glBindBuffer(GL_ARRAY_BUFFER, glMesh.uvbo);
+  glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(atlasUvs.size() * sizeof(Eigen::Vector2f)), atlasUvs.data(), GL_STATIC_DRAW);
+  glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Eigen::Vector2f), (void*)0);
+  glEnableVertexAttribArray(1);
+
+  glBindBuffer(GL_ARRAY_BUFFER, glMesh.abo);
+  glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(atlasIndices.size() * sizeof(float)), atlasIndices.data(), GL_STATIC_DRAW);
+  glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void*)0);
+  glEnableVertexAttribArray(2);
+
+  glBindBuffer(GL_ARRAY_BUFFER, glMesh.cbo);
+  glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(fallbackColors.size() * sizeof(Eigen::Vector3f)), fallbackColors.data(), GL_STATIC_DRAW);
+  glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(Eigen::Vector3f), (void*)0);
+  glEnableVertexAttribArray(3);
+
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, glMesh.ebo);
+  glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(indices.size() * sizeof(GLuint)), indices.data(), GL_STATIC_DRAW);
   glMesh.indexCount = static_cast<GLsizei>(indices.size());
 
   glBindVertexArray(0);
@@ -493,6 +539,7 @@ void MeshRenderer::uploadMeshes() {
     createGLMesh(primalDebugMesh_);
     createGLMesh(dualMesh_);
     createGLColorMesh(earthMesh_);
+    createGLAtlasMesh(earthAtlasMesh_);
     createGLTexturedMesh(earthSurfaceMesh_);
     viewsCreated_ = true;
   }
@@ -512,6 +559,8 @@ void MeshRenderer::uploadMeshes() {
   validation_ = validateDualTopology(*mesh_);
   buildEarthSurfaceMesh();
   bakeDualCellColors();
+  rebuildEarthTileAtlases();
+  buildEarthAtlasMesh();
   buildEarthMesh();
 }
 
@@ -622,9 +671,6 @@ void MeshRenderer::setupShaders() {
   glDeleteShader(colorVertexShader);
   glDeleteShader(colorFragmentShader);
   colorMvpLocation_ = glGetUniformLocation(colorShaderProgram_, "uMVP");
-  colorShadingStrengthLocation_ = glGetUniformLocation(colorShaderProgram_, "uShadingStrength");
-  colorLightDirLocation_ = glGetUniformLocation(colorShaderProgram_, "uLightDir");
-  colorGeneratedModeLocation_ = glGetUniformLocation(colorShaderProgram_, "uGeneratedMode");
   colorMorphFactorLocation_ = glGetUniformLocation(colorShaderProgram_, "uMorphFactor");
   colorMorphAnchorLocation_ = glGetUniformLocation(colorShaderProgram_, "uMorphAnchor");
   colorMorphEastLocation_ = glGetUniformLocation(colorShaderProgram_, "uMorphEast");
@@ -632,6 +678,57 @@ void MeshRenderer::setupShaders() {
   colorMorphRadiusLocation_ = glGetUniformLocation(colorShaderProgram_, "uSphereRadius");
   colorMorphStartAngleLocation_ = glGetUniformLocation(colorShaderProgram_, "uMorphStartAngle");
   colorMorphEndAngleLocation_ = glGetUniformLocation(colorShaderProgram_, "uMorphEndAngle");
+
+  GLuint atlasVertexShader = glCreateShader(GL_VERTEX_SHADER);
+  glShaderSource(atlasVertexShader, 1, &atlasVertexShaderSource, nullptr);
+  glCompileShader(atlasVertexShader);
+  glGetShaderiv(atlasVertexShader, GL_COMPILE_STATUS, &success);
+  if (!success) {
+    char infoLog[512];
+    glGetShaderInfoLog(atlasVertexShader, 512, nullptr, infoLog);
+    std::cerr << "Atlas vertex shader compilation failed:\n" << infoLog << std::endl;
+    throw std::runtime_error("Atlas vertex shader compilation failed");
+  }
+
+  GLuint atlasFragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+  glShaderSource(atlasFragmentShader, 1, &atlasFragmentShaderSource, nullptr);
+  glCompileShader(atlasFragmentShader);
+  glGetShaderiv(atlasFragmentShader, GL_COMPILE_STATUS, &success);
+  if (!success) {
+    char infoLog[512];
+    glGetShaderInfoLog(atlasFragmentShader, 512, nullptr, infoLog);
+    std::cerr << "Atlas fragment shader compilation failed:\n" << infoLog << std::endl;
+    throw std::runtime_error("Atlas fragment shader compilation failed");
+  }
+
+  atlasShaderProgram_ = glCreateProgram();
+  glAttachShader(atlasShaderProgram_, atlasVertexShader);
+  glAttachShader(atlasShaderProgram_, atlasFragmentShader);
+  glLinkProgram(atlasShaderProgram_);
+  glGetProgramiv(atlasShaderProgram_, GL_LINK_STATUS, &success);
+  if (!success) {
+    char infoLog[512];
+    glGetProgramInfoLog(atlasShaderProgram_, 512, nullptr, infoLog);
+    std::cerr << "Atlas shader program linking failed:\n" << infoLog << std::endl;
+    throw std::runtime_error("Atlas shader program linking failed");
+  }
+
+  glDeleteShader(atlasVertexShader);
+  glDeleteShader(atlasFragmentShader);
+  atlasMvpLocation_ = glGetUniformLocation(atlasShaderProgram_, "uMVP");
+  atlasTextureCountLocation_ = glGetUniformLocation(atlasShaderProgram_, "uAtlasTextureCount");
+  atlasLightDirLocation_ = glGetUniformLocation(atlasShaderProgram_, "uLightDir");
+  for (int i = 0; i < kMaxTileAtlases; ++i) {
+    std::string uniformName = "uAtlasTextures[" + std::to_string(i) + "]";
+    atlasSamplerLocations_[i] = glGetUniformLocation(atlasShaderProgram_, uniformName.c_str());
+  }
+  atlasMorphFactorLocation_ = glGetUniformLocation(atlasShaderProgram_, "uMorphFactor");
+  atlasMorphAnchorLocation_ = glGetUniformLocation(atlasShaderProgram_, "uMorphAnchor");
+  atlasMorphEastLocation_ = glGetUniformLocation(atlasShaderProgram_, "uMorphEast");
+  atlasMorphNorthLocation_ = glGetUniformLocation(atlasShaderProgram_, "uMorphNorth");
+  atlasMorphRadiusLocation_ = glGetUniformLocation(atlasShaderProgram_, "uSphereRadius");
+  atlasMorphStartAngleLocation_ = glGetUniformLocation(atlasShaderProgram_, "uMorphStartAngle");
+  atlasMorphEndAngleLocation_ = glGetUniformLocation(atlasShaderProgram_, "uMorphEndAngle");
 
   GLuint texturedVertexShader = glCreateShader(GL_VERTEX_SHADER);
   glShaderSource(texturedVertexShader, 1, &texturedVertexShaderSource, nullptr);
@@ -712,6 +809,15 @@ void MeshRenderer::applyMorphUniforms(GLuint program,
     radiusLocation = colorMorphRadiusLocation_;
     startAngleLocation = colorMorphStartAngleLocation_;
     endAngleLocation = colorMorphEndAngleLocation_;
+  } else if (program == atlasShaderProgram_) {
+    mvpLocation = atlasMvpLocation_;
+    factorLocation = atlasMorphFactorLocation_;
+    anchorLocation = atlasMorphAnchorLocation_;
+    eastLocation = atlasMorphEastLocation_;
+    northLocation = atlasMorphNorthLocation_;
+    radiusLocation = atlasMorphRadiusLocation_;
+    startAngleLocation = atlasMorphStartAngleLocation_;
+    endAngleLocation = atlasMorphEndAngleLocation_;
   } else if (program == texturedShaderProgram_) {
     mvpLocation = texturedMvpLocation_;
     factorLocation = texturedMorphFactorLocation_;
@@ -744,11 +850,27 @@ void MeshRenderer::renderMesh(const GLMesh& mesh, const glm::mat4& mvpMatrix, co
 
 void MeshRenderer::renderColoredMesh(const GLColorMesh& mesh, const glm::mat4& mvpMatrix, float shadingStrength) {
   (void)mvpMatrix;
+  (void)shadingStrength;
   glUseProgram(colorShaderProgram_);
-  glUniform1f(colorShadingStrengthLocation_, shadingStrength);
-  glUniform3f(colorLightDirLocation_, 0.35f, 0.2f, 0.92f);
-  glUniform1i(colorGeneratedModeLocation_, shadingStrength > 0.0f ? 1 : 0);
 
+  glEnable(GL_POLYGON_OFFSET_FILL);
+  glPolygonOffset(1.0f, 1.0f);
+  glBindVertexArray(mesh.vao);
+  glDrawElements(GL_TRIANGLES, mesh.indexCount, GL_UNSIGNED_INT, 0);
+  glBindVertexArray(0);
+  glDisable(GL_POLYGON_OFFSET_FILL);
+}
+
+void MeshRenderer::renderAtlasMesh(const GLAtlasMesh& mesh, const glm::mat4& mvpMatrix) {
+  (void)mvpMatrix;
+  glUseProgram(atlasShaderProgram_);
+  glUniform1i(atlasTextureCountLocation_, static_cast<int>(earthTileAtlasIds_.size()));
+  glUniform3f(atlasLightDirLocation_, 0.35f, 0.2f, 0.92f);
+  for (std::size_t i = 0; i < earthTileAtlasIds_.size() && i < static_cast<std::size_t>(kMaxTileAtlases); ++i) {
+    glActiveTexture(GL_TEXTURE0 + static_cast<GLenum>(i));
+    glBindTexture(GL_TEXTURE_2D, earthTileAtlasIds_[i]);
+    glUniform1i(atlasSamplerLocations_[i], static_cast<GLint>(i));
+  }
   glEnable(GL_POLYGON_OFFSET_FILL);
   glPolygonOffset(1.0f, 1.0f);
   glBindVertexArray(mesh.vao);
@@ -857,51 +979,28 @@ Eigen::Vector3f MeshRenderer::sampleDualFaceColor(const Face& face) const {
 
 void MeshRenderer::bakeDualCellColors() {
   dualCellColors_.clear();
-  tileVisuals_.clear();
   if (!mesh_) {
     return;
   }
 
   const Mesh& dual = mesh_->getDualMesh();
   dualCellColors_.reserve(dual.faces.size());
-  tileVisuals_.reserve(dual.faces.size());
   if (!earthTexture_.isLoaded()) {
     for (std::size_t faceIndex = 0; faceIndex < dual.faces.size(); ++faceIndex) {
       const auto& face = dual.faces[faceIndex];
       const std::size_t degree = static_cast<std::size_t>(face.size());
-      TileVisual visual;
       if (degree == 5) {
         dualCellColors_.emplace_back(0.78f, 0.66f, 0.34f);
-        visual.baseColor = dualCellColors_.back();
-        visual.waterBlend = 0.0f;
       } else {
         dualCellColors_.emplace_back(0.23f, 0.48f, 0.31f);
-        visual.baseColor = dualCellColors_.back();
-        visual.waterBlend = 0.0f;
       }
-      visual.seed = static_cast<float>((faceIndex * 37) % 997) / 997.0f * 11.0f;
-      tileVisuals_.push_back(visual);
     }
     return;
   }
 
   for (std::size_t faceIndex = 0; faceIndex < dual.faces.size(); ++faceIndex) {
     const auto& face = dual.faces[faceIndex];
-    const Eigen::Vector3f color = sampleDualFaceColor(face);
-    dualCellColors_.push_back(color);
-
-    TileVisual visual;
-    visual.baseColor = color;
-    const float brightness = color.dot(Eigen::Vector3f(0.2126f, 0.7152f, 0.0722f));
-    const float blueExcess = std::max(0.0f, color.z() - 0.5f * (color.x() + color.y()));
-    visual.waterBlend = std::clamp((blueExcess + (0.42f - brightness)) * 1.5f, 0.0f, 1.0f);
-    visual.luminanceBias = visual.waterBlend > 0.5f ? -0.02f : 0.03f;
-    visual.contrast = visual.waterBlend > 0.5f ? 1.08f : 1.14f;
-    visual.edgeDarkening = visual.waterBlend > 0.5f ? 0.08f : 0.15f;
-    visual.noiseScale = visual.waterBlend > 0.5f ? 4.5f : 3.2f;
-    visual.noiseAmplitude = visual.waterBlend > 0.5f ? 0.035f : 0.065f;
-    visual.seed = static_cast<float>((faceIndex * 37) % 997) / 997.0f * 11.0f;
-    tileVisuals_.push_back(visual);
+    dualCellColors_.push_back(sampleDualFaceColor(face));
   }
 }
 
@@ -914,15 +1013,9 @@ void MeshRenderer::buildEarthMesh() {
   const Mesh& dual = mesh_->getDualMesh();
   std::vector<Eigen::Vector3f> positions;
   std::vector<Eigen::Vector3f> colors;
-  std::vector<Eigen::Vector2f> localCoords;
-  std::vector<Eigen::Vector4f> paramsA;
-  std::vector<Eigen::Vector4f> paramsB;
   std::vector<GLuint> indices;
   positions.reserve(dual.faces.size() * 6);
   colors.reserve(dual.faces.size() * 6);
-  localCoords.reserve(dual.faces.size() * 6);
-  paramsA.reserve(dual.faces.size() * 6);
-  paramsB.reserve(dual.faces.size() * 6);
   indices.reserve(dual.faces.size() * 12);
 
   for (std::size_t faceIndex = 0; faceIndex < dual.faces.size(); ++faceIndex) {
@@ -934,10 +1027,179 @@ void MeshRenderer::buildEarthMesh() {
     const Eigen::Vector3f color = faceIndex < dualCellColors_.size()
       ? dualCellColors_[faceIndex]
       : Eigen::Vector3f(0.6f, 0.6f, 0.6f);
-    const TileVisual visual = faceIndex < tileVisuals_.size()
-      ? tileVisuals_[faceIndex]
-      : TileVisual{color};
 
+    for (int i = 0; i < face.size(); ++i) {
+      positions.push_back(dual.vertices.col(face[i]).cast<float>());
+      colors.push_back(color);
+    }
+
+    for (int i = 1; i < face.size() - 1; ++i) {
+      indices.push_back(baseIndex);
+      indices.push_back(baseIndex + static_cast<GLuint>(i));
+      indices.push_back(baseIndex + static_cast<GLuint>(i + 1));
+    }
+  }
+
+  uploadColorMeshToGL(positions, colors, indices, earthMesh_);
+}
+
+Eigen::Vector3f MeshRenderer::sampleEarthAtDirection(const Eigen::Vector3f& direction) const {
+  const Eigen::Vector3d point = direction.cast<double>();
+  const Eigen::Vector2d latLon = cartesianToLatLon(point);
+  const float u = static_cast<float>((latLon.y() + kPiD) / (2.0 * kPiD));
+  const float v = static_cast<float>((kPiD * 0.5 - latLon.x()) / kPiD);
+  return earthTexture_.sampleBilinear(u, v);
+}
+
+void MeshRenderer::rebuildEarthTileAtlases() {
+  tileVisuals_.clear();
+  if (!mesh_) {
+    return;
+  }
+  const Mesh& dual = mesh_->getDualMesh();
+  tileVisuals_.resize(dual.faces.size());
+
+  if (!earthTileAtlasIds_.empty()) {
+    glDeleteTextures(static_cast<GLsizei>(earthTileAtlasIds_.size()), earthTileAtlasIds_.data());
+    earthTileAtlasIds_.clear();
+  }
+
+  if (!earthTexture_.isLoaded()) {
+    for (std::size_t faceIndex = 0; faceIndex < dual.faces.size(); ++faceIndex) {
+      tileVisuals_[faceIndex].baseColor = faceIndex < dualCellColors_.size() ? dualCellColors_[faceIndex] : Eigen::Vector3f(0.4f, 0.45f, 0.5f);
+    }
+    return;
+  }
+
+  const int atlasTilesPerAxis = kTileAtlasSize / kTileTextureStride;
+  const int tilesPerAtlas = atlasTilesPerAxis * atlasTilesPerAxis;
+  const int atlasCount = static_cast<int>((dual.faces.size() + tilesPerAtlas - 1) / tilesPerAtlas);
+  if (atlasCount > kMaxTileAtlases) {
+    throw std::runtime_error("Tile atlas count exceeds supported limit");
+  }
+
+  std::vector<std::vector<unsigned char>> atlasPixels(static_cast<std::size_t>(atlasCount),
+                                                      std::vector<unsigned char>(static_cast<std::size_t>(kTileAtlasSize * kTileAtlasSize * 3), 0));
+
+  for (std::size_t faceIndex = 0; faceIndex < dual.faces.size(); ++faceIndex) {
+    const Face& face = dual.faces[faceIndex];
+    TileVisual visual;
+    visual.baseColor = faceIndex < dualCellColors_.size() ? dualCellColors_[faceIndex] : Eigen::Vector3f(0.4f, 0.45f, 0.5f);
+    const int atlasIndex = static_cast<int>(faceIndex / tilesPerAtlas);
+    const int tileSlot = static_cast<int>(faceIndex % tilesPerAtlas);
+    const int tileX = tileSlot % atlasTilesPerAxis;
+    const int tileY = tileSlot / atlasTilesPerAxis;
+    const int pixelX = tileX * kTileTextureStride + kTileTexturePadding;
+    const int pixelY = tileY * kTileTextureStride + kTileTexturePadding;
+
+    Eigen::Vector3f centroid = Eigen::Vector3f::Zero();
+    for (int i = 0; i < face.size(); ++i) {
+      centroid += dual.vertices.col(face[i]).cast<float>();
+    }
+    centroid.normalize();
+    Eigen::Vector3f ref(0.0f, 0.0f, 1.0f);
+    if (std::abs(centroid.dot(ref)) > 0.95f) {
+      ref = Eigen::Vector3f(0.0f, 1.0f, 0.0f);
+    }
+    const Eigen::Vector3f tangentX = ref.cross(centroid).normalized();
+    const Eigen::Vector3f tangentY = centroid.cross(tangentX).normalized();
+
+    float maxRadius = 1e-4f;
+    for (int i = 0; i < face.size(); ++i) {
+      const Eigen::Vector3f position = dual.vertices.col(face[i]).cast<float>();
+      const Eigen::Vector3f delta = position - centroid * position.dot(centroid);
+      const Eigen::Vector2f local(delta.dot(tangentX), delta.dot(tangentY));
+      maxRadius = std::max(maxRadius, local.norm());
+    }
+
+    auto& pixels = atlasPixels[static_cast<std::size_t>(atlasIndex)];
+    for (int py = 0; py < kTileTextureResolution; ++py) {
+      for (int px = 0; px < kTileTextureResolution; ++px) {
+        const float u = (static_cast<float>(px) + 0.5f) / static_cast<float>(kTileTextureResolution);
+        const float v = (static_cast<float>(py) + 0.5f) / static_cast<float>(kTileTextureResolution);
+        const float localX = (u * 2.0f - 1.0f) * maxRadius;
+        const float localY = (v * 2.0f - 1.0f) * maxRadius;
+        Eigen::Vector3f direction = (centroid + tangentX * localX + tangentY * localY).normalized();
+        const Eigen::Vector3f sample = sampleEarthAtDirection(direction);
+        const int atlasPx = pixelX + px;
+        const int atlasPy = pixelY + py;
+        const std::size_t offset = static_cast<std::size_t>((atlasPy * kTileAtlasSize + atlasPx) * 3);
+        pixels[offset] = static_cast<unsigned char>(std::clamp(sample.x(), 0.0f, 1.0f) * 255.0f);
+        pixels[offset + 1] = static_cast<unsigned char>(std::clamp(sample.y(), 0.0f, 1.0f) * 255.0f);
+        pixels[offset + 2] = static_cast<unsigned char>(std::clamp(sample.z(), 0.0f, 1.0f) * 255.0f);
+      }
+    }
+
+    for (int px = 0; px < kTileTextureResolution; ++px) {
+      for (int c = 0; c < 3; ++c) {
+        const std::size_t srcTop = static_cast<std::size_t>(((pixelY) * kTileAtlasSize + (pixelX + px)) * 3 + c);
+        const std::size_t dstTop = static_cast<std::size_t>(((pixelY - 1) * kTileAtlasSize + (pixelX + px)) * 3 + c);
+        const std::size_t srcBottom = static_cast<std::size_t>(((pixelY + kTileTextureResolution - 1) * kTileAtlasSize + (pixelX + px)) * 3 + c);
+        const std::size_t dstBottom = static_cast<std::size_t>(((pixelY + kTileTextureResolution) * kTileAtlasSize + (pixelX + px)) * 3 + c);
+        pixels[dstTop] = pixels[srcTop];
+        pixels[dstBottom] = pixels[srcBottom];
+      }
+    }
+    for (int py = -1; py <= kTileTextureResolution; ++py) {
+      for (int c = 0; c < 3; ++c) {
+        const int clampedPy = std::clamp(pixelY + py, pixelY, pixelY + kTileTextureResolution - 1);
+        const std::size_t srcLeft = static_cast<std::size_t>((clampedPy * kTileAtlasSize + pixelX) * 3 + c);
+        const std::size_t dstLeft = static_cast<std::size_t>((clampedPy * kTileAtlasSize + (pixelX - 1)) * 3 + c);
+        const std::size_t srcRight = static_cast<std::size_t>((clampedPy * kTileAtlasSize + (pixelX + kTileTextureResolution - 1)) * 3 + c);
+        const std::size_t dstRight = static_cast<std::size_t>((clampedPy * kTileAtlasSize + (pixelX + kTileTextureResolution)) * 3 + c);
+        pixels[dstLeft] = pixels[srcLeft];
+        pixels[dstRight] = pixels[srcRight];
+      }
+    }
+
+    visual.atlasIndex = atlasIndex;
+    visual.atlasUvMin = Eigen::Vector2f(
+      static_cast<float>(pixelX) / static_cast<float>(kTileAtlasSize),
+      static_cast<float>(pixelY) / static_cast<float>(kTileAtlasSize));
+    visual.atlasUvMax = Eigen::Vector2f(
+      static_cast<float>(pixelX + kTileTextureResolution) / static_cast<float>(kTileAtlasSize),
+      static_cast<float>(pixelY + kTileTextureResolution) / static_cast<float>(kTileAtlasSize));
+    tileVisuals_[faceIndex] = visual;
+  }
+
+  earthTileAtlasIds_.resize(static_cast<std::size_t>(atlasCount), 0);
+  glGenTextures(atlasCount, earthTileAtlasIds_.data());
+  for (int atlasIndex = 0; atlasIndex < atlasCount; ++atlasIndex) {
+    glBindTexture(GL_TEXTURE_2D, earthTileAtlasIds_[static_cast<std::size_t>(atlasIndex)]);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, kTileAtlasSize, kTileAtlasSize, 0, GL_RGB, GL_UNSIGNED_BYTE, atlasPixels[static_cast<std::size_t>(atlasIndex)].data());
+  }
+  glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void MeshRenderer::buildEarthAtlasMesh() {
+  if (!mesh_) {
+    earthAtlasMesh_.indexCount = 0;
+    return;
+  }
+
+  const Mesh& dual = mesh_->getDualMesh();
+  std::vector<Eigen::Vector3f> positions;
+  std::vector<Eigen::Vector2f> atlasUvs;
+  std::vector<float> atlasIndices;
+  std::vector<Eigen::Vector3f> fallbackColors;
+  std::vector<GLuint> indices;
+  positions.reserve(dual.faces.size() * 6);
+  atlasUvs.reserve(dual.faces.size() * 6);
+  atlasIndices.reserve(dual.faces.size() * 6);
+  fallbackColors.reserve(dual.faces.size() * 6);
+  indices.reserve(dual.faces.size() * 12);
+
+  for (std::size_t faceIndex = 0; faceIndex < dual.faces.size(); ++faceIndex) {
+    const Face& face = dual.faces[faceIndex];
+    if (face.size() < 3) {
+      continue;
+    }
+    const GLuint baseIndex = static_cast<GLuint>(positions.size());
+    const TileVisual visual = faceIndex < tileVisuals_.size() ? tileVisuals_[faceIndex] : TileVisual{};
     Eigen::Vector3f centroid = Eigen::Vector3f::Zero();
     for (int i = 0; i < face.size(); ++i) {
       centroid += dual.vertices.col(face[i]).cast<float>();
@@ -962,11 +1224,12 @@ void MeshRenderer::buildEarthMesh() {
     }
 
     for (int i = 0; i < face.size(); ++i) {
+      const Eigen::Vector2f local = projected[static_cast<std::size_t>(i)] / maxRadius;
+      const Eigen::Vector2f uv01 = (local + Eigen::Vector2f::Ones()) * 0.5f;
       positions.push_back(dual.vertices.col(face[i]).cast<float>());
-      colors.push_back(color);
-      localCoords.push_back(projected[static_cast<std::size_t>(i)] / maxRadius);
-      paramsA.emplace_back(visual.waterBlend, visual.luminanceBias, visual.contrast, visual.edgeDarkening);
-      paramsB.emplace_back(visual.noiseScale, visual.noiseAmplitude, visual.seed, 0.0f);
+      atlasUvs.push_back(visual.atlasUvMin + uv01.cwiseProduct(visual.atlasUvMax - visual.atlasUvMin));
+      atlasIndices.push_back(static_cast<float>(visual.atlasIndex));
+      fallbackColors.push_back(visual.baseColor);
     }
 
     for (int i = 1; i < face.size() - 1; ++i) {
@@ -976,7 +1239,7 @@ void MeshRenderer::buildEarthMesh() {
     }
   }
 
-  uploadColorMeshToGL(positions, colors, localCoords, paramsA, paramsB, indices, earthMesh_);
+  uploadAtlasMeshToGL(positions, atlasUvs, atlasIndices, fallbackColors, indices, earthAtlasMesh_);
 }
 
 void MeshRenderer::buildEarthSurfaceMesh() {
@@ -1063,9 +1326,9 @@ void MeshRenderer::renderAllMeshes(const glm::mat4& mvpMatrix, const Visibility&
     renderTexturedMesh(earthSurfaceMesh_, mvpMatrix);
   }
   if (vis.isEarthVisible_) {
-    glUseProgram(colorShaderProgram_);
-    applyMorphUniforms(colorShaderProgram_, mvpMatrix, cameraPosition, morphFactor);
-    renderColoredMesh(earthMesh_, mvpMatrix, 1.0f);
+    glUseProgram(atlasShaderProgram_);
+    applyMorphUniforms(atlasShaderProgram_, mvpMatrix, cameraPosition, morphFactor);
+    renderAtlasMesh(earthAtlasMesh_, mvpMatrix);
   }
   if (vis.isEarthDebugVisible_) {
     glUseProgram(colorShaderProgram_);
@@ -1106,6 +1369,8 @@ void MeshRenderer::setPerformanceMode(PerformanceMode mode) {
   performanceMode_ = mode;
   if (mesh_) {
     bakeDualCellColors();
+    rebuildEarthTileAtlases();
+    buildEarthAtlasMesh();
     buildEarthMesh();
   }
 }
