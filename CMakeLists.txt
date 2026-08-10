@@ -5,6 +5,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+option(SPHERICAL_TILING_BUILD_VISUALIZATION "Build the experimental GUI/visualization module" OFF)
+option(SPHERICAL_TILING_BUILD_GUI "Build the GUI executable" OFF)
+
 # Set default build type to Release if not specified
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -29,12 +32,12 @@ message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
 # Find required packages
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
-find_package(Ceres REQUIRED)
 
 # Add library subdirectories
 add_subdirectory(src/lib/geometric)
-add_subdirectory(src/lib/optimization)
-add_subdirectory(src/lib/visualization)
+if(SPHERICAL_TILING_BUILD_VISUALIZATION OR SPHERICAL_TILING_BUILD_GUI)
+    add_subdirectory(src/lib/visualization)
+endif()
 
 # Add application subdirectory
 add_subdirectory(src/app)

@@ -4,7 +4,7 @@
 namespace spherical_tiling {
 
 Camera::Camera() 
-    : distance_(3.0f), yaw_(0.0f), pitch_(0.0f),
+    : distance_(3.0f), azimuth_(0.0f), latitude_(0.0f),
       fov_(45.0f), aspect_(1.0f), nearPlane_(0.1f), farPlane_(100.0f) {
     updateViewMatrix();
 }
@@ -33,14 +33,22 @@ Eigen::Matrix4f Camera::getProjectionMatrix() const {
     return projMatrix_;
 }
 
-void Camera::rotate(float deltaYaw, float deltaPitch) {
-    yaw_ += deltaYaw;
-    pitch_ += deltaPitch;
+Eigen::Vector3f Camera::getEyePosition() const {
+    const float cosLat = std::cos(latitude_);
+    const float x = distance_ * cosLat * std::cos(azimuth_);
+    const float y = distance_ * cosLat * std::sin(azimuth_);
+    const float z = distance_ * std::sin(latitude_);
+    return Eigen::Vector3f(x, y, z);
+}
+
+void Camera::rotate(float deltaAzimuth, float deltaLatitude) {
+    azimuth_ += deltaAzimuth;
+    latitude_ += deltaLatitude;
     
-    // Clamp pitch to avoid gimbal lock
-    const float maxPitch = 89.0f * M_PI / 180.0f;
-    if (pitch_ > maxPitch) pitch_ = maxPitch;
-    if (pitch_ < -maxPitch) pitch_ = -maxPitch;
+    // Clamp latitude so north/south input stops at the poles without flipping.
+    const float maxLatitude = 89.0f * static_cast<float>(M_PI) / 180.0f;
+    if (latitude_ > maxLatitude) latitude_ = maxLatitude;
+    if (latitude_ < -maxLatitude) latitude_ = -maxLatitude;
     
     updateViewMatrix();
 }
@@ -57,24 +65,24 @@ void Camera::zoom(float deltaDistance) {
 
 void Camera::reset() {
     distance_ = 3.0f;
-    yaw_ = 0.0f;
-    pitch_ = 0.0f;
+    azimuth_ = 0.0f;
+    latitude_ = 0.0f;
     updateViewMatrix();
 }
 
 void Camera::updateViewMatrix() {
-    // Calculate camera position in Cartesian coordinates
-    float x = distance_ * std::cos(pitch_) * std::sin(yaw_);
-    float y = distance_ * std::sin(pitch_);
-    float z = distance_ * std::cos(pitch_) * std::cos(yaw_);
-    
-    Eigen::Vector3f eye(x, y, z);
+    Eigen::Vector3f eye = getEyePosition();
     Eigen::Vector3f center(0.0f, 0.0f, 0.0f);  // Looking at origin
-    Eigen::Vector3f up(0.0f, 1.0f, 0.0f);
+    Eigen::Vector3f worldNorth(0.0f, 0.0f, 1.0f);
     
-    // Build view matrix (look-at)
     Eigen::Vector3f f = (center - eye).normalized();
-    Eigen::Vector3f s = f.cross(up).normalized();
+    Eigen::Vector3f s = f.cross(worldNorth);
+    if (s.squaredNorm() < 1e-6f) {
+        // At the poles, derive a stable east direction from azimuth.
+        s = Eigen::Vector3f(-std::sin(azimuth_), std::cos(azimuth_), 0.0f);
+    } else {
+        s.normalize();
+    }
     Eigen::Vector3f u = s.cross(f);
     
     viewMatrix_ = Eigen::Matrix4f::Identity();

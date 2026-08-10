@@ -2,9 +2,7 @@ cmake_minimum_required(VERSION 3.15)
 
 # Geometric library
 add_library(geometric
-    src/goldberg_subdivision.cpp
-    src/tile_graph.cpp
-    src/dual_construction.cpp
+    src/mesh_construction.cpp
 )
 
 target_include_directories(geometric PUBLIC

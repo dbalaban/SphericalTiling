@@ -1,5 +1,7 @@
 # GUI Feature Summary
 
+This document is historical. As of August 9, 2026, the repository includes a simpler supported GUI viewer, but the controller-heavy design described here is still not the active implementation.
+
 ## Implemented Features
 
 ### ✅ Core Requirements

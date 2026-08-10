@@ -1,5 +1,7 @@
 # GUI Viewer Implementation Guide
 
+This document is historical. As of August 9, 2026, the repository includes a simpler supported GUI viewer, but the implementation described here does not match the active code exactly.
+
 ## Overview
 
 The GUI viewer provides interactive 3D visualization of spherical tilings using OpenGL, GLFW, and ImGui.
@@ -53,22 +55,12 @@ Main application that integrates all components.
 
 ```cpp
 struct AppState {
-    // Sphere parameters
     double radius;
     int frequency;
-    WeightFunction weightFunc;
-    bool runOptimization;
-    
-    // Mesh data
     std::vector<Eigen::Vector3d> primalVertices;
     std::vector<Eigen::Vector3i> primalFaces;
-    std::unique_ptr<TileGraph> graph;
-    
-    // Display options
     bool showPrimal;
     bool showDual;
-    
-    // UI state
     bool showCreateDialog;
     bool needsRebuild;
 };
@@ -123,8 +115,7 @@ The `buildSphere()` function recreates the mesh:
 2. Perform Goldberg subdivision
 3. Build TileGraph
 4. Construct dual cells
-5. Run optimization (if enabled)
-6. Update renderer with new mesh data
+5. Update renderer with new mesh data
 
 Creating a new sphere **overwrites** the current sphere (as specified in requirements).
 
