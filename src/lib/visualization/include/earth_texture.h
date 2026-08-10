@@ -15,6 +15,7 @@ public:
   int width() const { return width_; }
   int height() const { return height_; }
   const std::string& path() const { return path_; }
+  const unsigned char* data() const { return pixels_.empty() ? nullptr : pixels_.data(); }
 
   Eigen::Vector3f sampleBilinear(float u, float v) const;
 

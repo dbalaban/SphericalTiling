@@ -12,7 +12,7 @@ using namespace spherical_tiling;
 namespace {
 
 void printUsage(const char* argv0) {
-    std::cout << "Usage: " << argv0 << " [--q <frequency 1..24>] [--radius <value>] [--help]\n";
+    std::cout << "Usage: " << argv0 << " [--q <frequency 1..128>] [--radius <value>] [--help]\n";
 }
 
 bool parseIntArg(const std::string& text, int& value) {

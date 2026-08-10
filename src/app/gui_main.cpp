@@ -10,6 +10,7 @@
 #include "backends/imgui_impl_opengl3.h"
 
 #include <cstring>
+#include <chrono>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -28,12 +29,15 @@ struct AppState {
   int frequency = 3;
 
   bool showEarth = true;
+  bool showEarthDebug = false;
+  bool showReferenceGlobe = false;
   bool showIcosahedron = false;
   bool showSubdivision = false;
   bool showPrimal = true;
   bool showPrimalDebug = false;
   bool showDual = true;
   bool enableMorph = true;
+  PerformanceMode performanceMode = PerformanceMode::Balanced;
 
   bool needsRebuild = true;
   bool dragging = false;
@@ -46,6 +50,8 @@ struct AppState {
   std::shared_ptr<MeshRenderer> renderer;
   std::shared_ptr<MeshConstructor> mesh;
   std::string earthStatus;
+  double lastRebuildMs = 0.0;
+  double frameTimeMs = 0.0;
 };
 
 void glfwErrorCallback(int error, const char* description) {
@@ -55,6 +61,8 @@ void glfwErrorCallback(int error, const char* description) {
 Visibility getVisibility(const AppState& state) {
   return Visibility{
     state.showEarth,
+    state.showEarthDebug,
+    state.showReferenceGlobe,
     state.showIcosahedron,
     state.showSubdivision,
     state.showPrimal,
@@ -64,8 +72,11 @@ Visibility getVisibility(const AppState& state) {
 }
 
 void rebuildMesh(AppState& state) {
+  const auto started = std::chrono::steady_clock::now();
   state.mesh = std::make_shared<MeshConstructor>(state.radius, static_cast<uint16_t>(state.frequency));
   state.renderer->setMeshConstruct(state.mesh);
+  const auto finished = std::chrono::steady_clock::now();
+  state.lastRebuildMs = std::chrono::duration<double, std::milli>(finished - started).count();
   state.needsRebuild = false;
 }
 
@@ -153,19 +164,59 @@ float computeMorphFactor(const AppState& state) {
   return factor * factor * (3.0f - 2.0f * factor);
 }
 
+const char* performanceModeLabel(PerformanceMode mode) {
+  switch (mode) {
+    case PerformanceMode::Quality:
+      return "Quality";
+    case PerformanceMode::Balanced:
+      return "Balanced";
+    case PerformanceMode::Performance:
+      return "Performance";
+  }
+  return "Balanced";
+}
+
+void applyPerformanceDefaults(AppState& state) {
+  if (state.frequency <= 32) {
+    return;
+  }
+
+  if (state.performanceMode != PerformanceMode::Quality) {
+    state.showEarthDebug = false;
+    state.showReferenceGlobe = false;
+    state.showIcosahedron = false;
+    state.showSubdivision = false;
+    state.showPrimalDebug = false;
+  }
+  if (state.performanceMode == PerformanceMode::Performance) {
+    state.showPrimal = false;
+    state.showDual = false;
+  }
+}
+
 void renderUi(AppState& state) {
   static const double minRadius = 0.25;
   static const double maxRadius = 5.0;
+  static int maxSliderFrequency = 64;
 
   ImGui::SetNextWindowPos(ImVec2(12, 12), ImGuiCond_FirstUseEver);
-  ImGui::SetNextWindowSize(ImVec2(330, 380), ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowSize(ImVec2(360, 500), ImGuiCond_FirstUseEver);
   if (ImGui::Begin("Spherical Tiling")) {
-    ImGui::Text("Earth tile morph viewer");
+    ImGui::Text("Polygon-first Earth viewer");
     ImGui::Separator();
 
     bool rebuildRequested = false;
-    rebuildRequested |= ImGui::SliderInt("Frequency (q)", &state.frequency, 1, 24);
+    rebuildRequested |= ImGui::SliderInt("Frequency (q)", &state.frequency, 1, maxSliderFrequency);
+    rebuildRequested |= ImGui::InputInt("Manual q", &state.frequency);
+    if (state.frequency < 1) state.frequency = 1;
+    if (state.frequency > 128) state.frequency = 128;
     rebuildRequested |= ImGui::SliderScalar("Radius", ImGuiDataType_Double, &state.radius, &minRadius, &maxRadius, "%.2f");
+    int modeIndex = static_cast<int>(state.performanceMode);
+    if (ImGui::Combo("Render Mode", &modeIndex, "Quality\0Balanced\0Performance\0")) {
+      state.performanceMode = static_cast<PerformanceMode>(modeIndex);
+      state.renderer->setPerformanceMode(state.performanceMode);
+      applyPerformanceDefaults(state);
+    }
 
     if (ImGui::Button("Rebuild")) {
       state.needsRebuild = true;
@@ -178,9 +229,16 @@ void renderUi(AppState& state) {
     if (rebuildRequested) {
       ImGui::TextUnformatted("Press Rebuild to apply mesh changes");
     }
+    if (state.frequency > 64) {
+      ImGui::TextWrapped("High-q warning: values above 64 are available for testing, but overlays and rebuild times will become expensive even on the GPU path.");
+    }
+
+    ImGui::SeparatorText("Base Surface");
+    ImGui::Checkbox("Tile Earth", &state.showEarth);
+    ImGui::Checkbox("Reference Globe", &state.showReferenceGlobe);
 
     ImGui::SeparatorText("Overlays");
-    ImGui::Checkbox("Earth Tiles", &state.showEarth);
+    ImGui::Checkbox("Tile Earth Debug", &state.showEarthDebug);
     ImGui::Checkbox("Icosahedron", &state.showIcosahedron);
     ImGui::Checkbox("Subdivision", &state.showSubdivision);
     ImGui::Checkbox("Primal", &state.showPrimal);
@@ -193,6 +251,12 @@ void renderUi(AppState& state) {
     ImGui::Text("Camera distance: %.2f", state.camera.getDistance());
     ImGui::Text("Azimuth: %.1f deg", state.camera.getAzimuth() * 180.0f / static_cast<float>(M_PI));
     ImGui::Text("Latitude: %.1f deg", state.camera.getLatitude() * 180.0f / static_cast<float>(M_PI));
+
+    ImGui::SeparatorText("Performance");
+    ImGui::Text("Mode: %s", performanceModeLabel(state.performanceMode));
+    ImGui::Text("Bake samples/axis: %d", state.renderer->getEarthBakeSamplesPerAxis());
+    ImGui::Text("Last rebuild: %.1f ms", state.lastRebuildMs);
+    ImGui::Text("Frame time: %.2f ms (%.1f FPS)", state.frameTimeMs, state.frameTimeMs > 0.0 ? 1000.0 / state.frameTimeMs : 0.0);
 
     if (state.mesh) {
       const Mesh& subdivided = state.mesh->getSubdividedMesh();
@@ -251,6 +315,7 @@ int main() {
 
   AppState state;
   state.renderer = std::make_shared<MeshRenderer>();
+  state.renderer->setPerformanceMode(state.performanceMode);
   state.camera.setPerspective(45.0f, static_cast<float>(kWindowWidth) / static_cast<float>(kWindowHeight), 0.1f, 100.0f);
   std::string textureError;
   if (state.renderer->loadEarthTexture("assets/earth/blue_marble_5400x2700_december.jpg", textureError)) {
@@ -281,10 +346,12 @@ int main() {
   }
 
   while (!glfwWindowShouldClose(window)) {
+    const auto frameStarted = std::chrono::steady_clock::now();
     glfwPollEvents();
 
     if (state.needsRebuild) {
       try {
+        applyPerformanceDefaults(state);
         rebuildMesh(state);
       } catch (const std::exception& ex) {
         std::cerr << "Mesh rebuild failed: " << ex.what() << '\n';
@@ -307,6 +374,9 @@ int main() {
 
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     glfwSwapBuffers(window);
+    const auto frameFinished = std::chrono::steady_clock::now();
+    const double frameMs = std::chrono::duration<double, std::milli>(frameFinished - frameStarted).count();
+    state.frameTimeMs = state.frameTimeMs <= 0.0 ? frameMs : (state.frameTimeMs * 0.9 + frameMs * 0.1);
   }
 
   ImGui_ImplOpenGL3_Shutdown();
