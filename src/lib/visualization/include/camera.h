@@ -18,22 +18,25 @@ public:
     Eigen::Matrix4f getProjectionMatrix() const;
     
     // Camera controls
-    void rotate(float deltaYaw, float deltaPitch);
+    void rotate(float deltaAzimuth, float deltaLatitude);
     void zoom(float deltaDistance);
     void reset();
     
     // Getters
     float getDistance() const { return distance_; }
-    float getYaw() const { return yaw_; }
-    float getPitch() const { return pitch_; }
+    float getYaw() const { return azimuth_; }
+    float getPitch() const { return latitude_; }
+    float getAzimuth() const { return azimuth_; }
+    float getLatitude() const { return latitude_; }
+    Eigen::Vector3f getEyePosition() const;
     
 private:
     void updateViewMatrix();
     
-    // Camera position in spherical coordinates (looking at origin)
+    // Camera position in spherical coordinates around the Z-up globe.
     float distance_;
-    float yaw_;    // horizontal rotation
-    float pitch_;  // vertical rotation
+    float azimuth_;
+    float latitude_;
 
     // Projection parameters
     float fov_;

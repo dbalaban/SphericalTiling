@@ -2,10 +2,23 @@
 
 #include "templated_geometry.h"
 
+#include <cstdint>
 #include <memory>
+#include <string>
+#include <vector>
 
 struct Mesh;
 class MeshConstructor;
+
+struct DualTopologyReport {
+  bool valid = true;
+  std::size_t expectedDualCells = 0;
+  std::size_t actualDualCells = 0;
+  std::size_t pentagons = 0;
+  std::size_t hexagons = 0;
+  std::size_t otherCells = 0;
+  std::vector<std::string> errors;
+};
 
 typedef std::shared_ptr<Mesh> MeshPtr;
 typedef std::shared_ptr<const Mesh> ConstMeshPtr;
@@ -24,18 +37,12 @@ typedef std::vector<Edge> Edges;
 struct Mesh {
   Vertices vertices; // 3xN matrix of vertex positions
   Edges edges;       // list of connected edges (pairs of vertex indices)
-  Faces faces; // list of triangular faces (triplets of vertex indices)
+  Faces faces;       // polygon loops; primal mesh stores neighbor rings per vertex
 };
 
 class MeshConstructor {
 public:
-  MeshConstructor(double R, uint16_t q) : _radius(R), _frequency(q) {
-    assert(_frequency > 0);
-    generateIcosahedron();
-    subdivideIcosahedron();
-    projectSubdivisions();
-    constructDualCells();
-  }
+  MeshConstructor(double R, uint16_t q);
   ~MeshConstructor() = default;
 
   const Mesh& getIcosahedron() const {
@@ -54,6 +61,14 @@ public:
     return _dual;
   }
 
+  double getRadius() const {
+    return _radius;
+  }
+
+  uint16_t getFrequency() const {
+    return _frequency;
+  }
+
 private:
   double _radius;
   uint16_t _frequency;
@@ -70,3 +85,5 @@ private:
   void projectSubdivisions();
   void constructDualCells();
 };
+
+DualTopologyReport validateDualTopology(const MeshConstructor& constructor);

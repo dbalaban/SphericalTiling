@@ -1,512 +1,318 @@
 #include "camera.h"
-#include "mesh_renderer.h"
 #include "mesh_construction.h"
-#include "optimization.h"
+#include "mesh_renderer.h"
 
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
-#include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_opengl3.h>
 
+#include "imgui.h"
+#include "backends/imgui_impl_glfw.h"
+#include "backends/imgui_impl_opengl3.h"
+
+#include <cstring>
 #include <iostream>
 #include <memory>
+#include <string>
 #include <stdexcept>
-#include <exception>
-#include <csignal>
-#include <cstdlib>
-#include <cstdio>
-#include <unistd.h>
-
-#ifdef __GNUC__
-#include <execinfo.h>
-#include <cxxabi.h>
-#include <dlfcn.h>
-#endif
 
 using namespace spherical_tiling;
 
-// Stack trace utility for debugging
-void printStackTrace() {
-#ifdef __GNUC__
-    std::cerr << "\n=== Stack Trace ===" << std::endl;
-    std::cerr.flush();
-    
-    void* array[50];
-    int size = backtrace(array, 50);
-    char** messages = backtrace_symbols(array, size);
-    
-    if (messages == nullptr) {
-        std::cerr << "Failed to get backtrace symbols" << std::endl;
-        std::cerr.flush();
-        return;
-    }
-    
-    for (int i = 0; i < size; ++i) {
-        Dl_info info;
-        if (dladdr(array[i], &info) && info.dli_sname) {
-            char* demangled = nullptr;
-            int status = -1;
-            demangled = abi::__cxa_demangle(info.dli_sname, nullptr, nullptr, &status);
-            std::cerr << "  [" << i << "] " 
-                      << (status == 0 ? demangled : info.dli_sname) 
-                      << " + " << (void*)((char*)array[i] - (char*)info.dli_saddr)
-                      << std::endl;
-            free(demangled);
-        } else {
-            std::cerr << "  [" << i << "] " << messages[i] << std::endl;
-        }
-        std::cerr.flush();
-    }
-    std::cerr << "===================" << std::endl;
-    std::cerr.flush();
-    free(messages);
-#else
-    std::cerr << "Stack trace not available on this platform" << std::endl;
-    std::cerr.flush();
-#endif
-}
+namespace {
 
-// Signal handler for segmentation faults
-void signalHandler(int signal) {
-    // Flush all output buffers immediately
-    std::cerr.flush();
-    std::cout.flush();
-    
-    std::cerr << "\n!!! SEGMENTATION FAULT DETECTED !!!" << std::endl;
-    std::cerr << "Signal: " << signal << " (SIGSEGV)" << std::endl;
-    std::cerr << "This indicates a memory access violation." << std::endl;
-    
-    printStackTrace();
-    
-    // Flush again before exiting
-    std::cerr.flush();
-    
-    // Use _exit() instead of exit() to bypass cleanup that might cause issues
-    _exit(signal);
-}
+constexpr int kWindowWidth = 1280;
+constexpr int kWindowHeight = 720;
+constexpr const char* kGlslVersion = "#version 330";
 
-// Application state
 struct AppState {
-    // Sphere parameters
-    double radius = 1.0;
-    int frequency = 3;
-    WeightFunction weightFunc = WeightFunction::F1;
-    bool runOptimization = false;
-    
-    // Mesh data
-    std::vector<Eigen::Vector3d> primalVertices;
-    std::vector<Eigen::Vector3i> primalFaces;
-    std::unique_ptr<TileGraph> graph;
-    
-    // Display options
-    bool showPrimal = false;
-    bool showDual = true;
-    bool showTriangles = false;
-    
-    // UI state
-    bool showCreateDialog = false;
-    bool needsRebuild = true;
+  double radius = 1.0;
+  int frequency = 3;
+
+  bool showEarth = true;
+  bool showIcosahedron = false;
+  bool showSubdivision = false;
+  bool showPrimal = true;
+  bool showPrimalDebug = false;
+  bool showDual = true;
+  bool enableMorph = true;
+
+  bool needsRebuild = true;
+  bool dragging = false;
+  double lastMouseX = 0.0;
+  double lastMouseY = 0.0;
+  int framebufferWidth = kWindowWidth;
+  int framebufferHeight = kWindowHeight;
+
+  Camera camera;
+  std::shared_ptr<MeshRenderer> renderer;
+  std::shared_ptr<MeshConstructor> mesh;
+  std::string earthStatus;
 };
 
-// Camera and rendering
-Camera camera;
-MeshRenderer* renderer = nullptr; // Delayed initialization after OpenGL setup
-AppState appState;
+void glfwErrorCallback(int error, const char* description) {
+  std::cerr << "[GLFW Error " << error << "]: " << description << '\n';
+}
 
-// Mouse state for camera control
-double lastMouseX = 0.0;
-double lastMouseY = 0.0;
-bool mousePressed = false;
+Visibility getVisibility(const AppState& state) {
+  return Visibility{
+    state.showEarth,
+    state.showIcosahedron,
+    state.showSubdivision,
+    state.showPrimal,
+    state.showPrimalDebug,
+    state.showDual,
+  };
+}
 
-void buildSphere() {
-    try {
-        // Generate icosahedron
-        appState.primalVertices = generateIcosahedron(appState.radius);
-        auto icoFaces = generateIcosahedronFaces();
-        
-        // Perform Goldberg subdivision
-        auto subdivision = goldbergSubdivision(appState.primalVertices, icoFaces, 
-                                               appState.frequency, appState.radius);
-        appState.primalVertices = subdivision.vertices;
-        appState.primalFaces = subdivision.faces;
-        
-        // Build tile graph
-        appState.graph = std::make_unique<TileGraph>();
-        appState.graph->buildFromTriangulation(subdivision.vertices, subdivision.faces, 
-                                               appState.radius);
-        
-        // Construct dual cells
-        constructDualCells(*appState.graph, appState.radius);
-        
-        // Optimize if requested
-        if (appState.runOptimization) {
-            int maxIter = (appState.frequency <= 2) ? 50 : 100;
-            optimizeTileGraph(*appState.graph, appState.radius, appState.weightFunc, maxIter, true);
-            constructDualCells(*appState.graph, appState.radius);
-        }
+void rebuildMesh(AppState& state) {
+  state.mesh = std::make_shared<MeshConstructor>(state.radius, static_cast<uint16_t>(state.frequency));
+  state.renderer->setMeshConstruct(state.mesh);
+  state.needsRebuild = false;
+}
 
-        // Update renderer
-        // Primal mesh now shows the adjacency graph (TileGraph edges) in red
-        renderer->setPrimalMesh(*appState.graph, appState.radius);
-        renderer->setDualMesh(*appState.graph, appState.radius);
-        // Triangular mesh shows the subdivision face edges in green
-        renderer->setTriangleMesh(appState.primalVertices, appState.primalFaces);
-        
-        appState.needsRebuild = false;
-        
-        std::cout << "Built sphere: frequency=" << appState.frequency 
-                  << ", vertices=" << appState.primalVertices.size()
-                  << ", faces=" << appState.primalFaces.size() << std::endl;
-    } catch (const std::exception& e) {
-        std::cerr << "ERROR in buildSphere(): " << e.what() << std::endl;
-        printStackTrace();
-        appState.needsRebuild = false; // Prevent infinite rebuild loop
-    } catch (...) {
-        std::cerr << "UNKNOWN ERROR in buildSphere()" << std::endl;
-        printStackTrace();
-        appState.needsRebuild = false; // Prevent infinite rebuild loop
-    }
+void framebufferSizeCallback(GLFWwindow* window, int width, int height) {
+  auto* state = static_cast<AppState*>(glfwGetWindowUserPointer(window));
+  if (!state) {
+    return;
+  }
+
+  state->framebufferWidth = width;
+  state->framebufferHeight = height;
+  glViewport(0, 0, width, height);
+  if (height > 0) {
+    state->camera.setPerspective(45.0f, static_cast<float>(width) / static_cast<float>(height), 0.1f, 100.0f);
+  }
 }
 
 void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
-    (void)mods; // Unused parameter
-    if (button == GLFW_MOUSE_BUTTON_LEFT) {
-        if (action == GLFW_PRESS) {
-            // Check if ImGui wants to capture the mouse
-            ImGuiIO& io = ImGui::GetIO();
-            if (!io.WantCaptureMouse) {
-                mousePressed = true;
-                glfwGetCursorPos(window, &lastMouseX, &lastMouseY);
-            }
-        } else if (action == GLFW_RELEASE) {
-            mousePressed = false;
-        }
-    }
+  (void)mods;
+  auto* state = static_cast<AppState*>(glfwGetWindowUserPointer(window));
+  if (!state || button != GLFW_MOUSE_BUTTON_LEFT) {
+    return;
+  }
+
+  ImGuiIO& io = ImGui::GetIO();
+  if (action == GLFW_PRESS && !io.WantCaptureMouse) {
+    state->dragging = true;
+    glfwGetCursorPos(window, &state->lastMouseX, &state->lastMouseY);
+  } else if (action == GLFW_RELEASE) {
+    state->dragging = false;
+  }
 }
 
 void cursorPosCallback(GLFWwindow* window, double xpos, double ypos) {
-    (void)window; // Unused parameter
-    if (mousePressed) {
-        double deltaX = xpos - lastMouseX;
-        double deltaY = ypos - lastMouseY;
-        
-        camera.rotate(deltaX * 0.01f, -deltaY * 0.01f);
-        
-        lastMouseX = xpos;
-        lastMouseY = ypos;
-    }
+  auto* state = static_cast<AppState*>(glfwGetWindowUserPointer(window));
+  if (!state) {
+    return;
+  }
+
+  if (!state->dragging) {
+    state->lastMouseX = xpos;
+    state->lastMouseY = ypos;
+    return;
+  }
+
+  ImGuiIO& io = ImGui::GetIO();
+  if (io.WantCaptureMouse) {
+    state->dragging = false;
+    return;
+  }
+
+  const double dx = xpos - state->lastMouseX;
+  const double dy = ypos - state->lastMouseY;
+  // Horizontal drag changes azimuth; vertical drag changes latitude.
+  state->camera.rotate(static_cast<float>(-dx) * 0.01f, static_cast<float>(dy) * 0.01f);
+  state->lastMouseX = xpos;
+  state->lastMouseY = ypos;
 }
 
 void scrollCallback(GLFWwindow* window, double xoffset, double yoffset) {
-    (void)window;  // Unused parameter
-    (void)xoffset; // Unused parameter
-    ImGuiIO& io = ImGui::GetIO();
-    if (!io.WantCaptureMouse) {
-        camera.zoom(-yoffset * 0.3f);
-    }
+  (void)window;
+  (void)xoffset;
+  ImGuiIO& io = ImGui::GetIO();
+  if (io.WantCaptureMouse) {
+    return;
+  }
+
+  auto* state = static_cast<AppState*>(glfwGetWindowUserPointer(window));
+  if (state) {
+    state->camera.zoom(static_cast<float>(-yoffset) * 0.3f);
+  }
 }
 
-void renderUI() {
-    // Main menu bar
-    if (ImGui::BeginMainMenuBar()) {
-        if (ImGui::BeginMenu("Sphere")) {
-            if (ImGui::MenuItem("Create New Sphere")) {
-                appState.showCreateDialog = true;
-            }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Reset Camera")) {
-                camera.reset();
-            }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Exit")) {
-                glfwSetWindowShouldClose(glfwGetCurrentContext(), GLFW_TRUE);
-            }
-            ImGui::EndMenu();
-        }
-        ImGui::EndMainMenuBar();
-    }
-    
-    // Display options panel
-    ImGui::SetNextWindowPos(ImVec2(10, 30), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(250, 150), ImGuiCond_FirstUseEver);
-    ImGui::Begin("Display Options");
-    
-    ImGui::Text("Mesh Visibility:");
-    ImGui::Checkbox("Show Primal (Red)", &appState.showPrimal);
-    ImGui::Checkbox("Show Dual (Black)", &appState.showDual);
-    ImGui::Checkbox("Show Triangles (Green)", &appState.showTriangles);
-    
-    ImGui::Separator();
-    ImGui::Text("Camera:");
-    ImGui::Text("  Distance: %.2f", camera.getDistance());
-    ImGui::Text("  Yaw: %.1f°", camera.getYaw() * 180.0f / M_PI);
-    ImGui::Text("  Pitch: %.1f°", camera.getPitch() * 180.0f / M_PI);
-    
-    if (ImGui::Button("Reset Camera")) {
-        camera.reset();
-    }
-    
-    ImGui::End();
-    
-    // Sphere info panel
-    ImGui::SetNextWindowPos(ImVec2(10, 190), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(250, 150), ImGuiCond_FirstUseEver);
-    ImGui::Begin("Sphere Info");
-    
-    ImGui::Text("Parameters:");
-    ImGui::Text("  Frequency: %d", appState.frequency);
-    ImGui::Text("  Radius: %.2f", appState.radius);
-    ImGui::Text("  Optimization: %s", appState.runOptimization ? "Yes" : "No");
-    
-    if (appState.graph) {
-        ImGui::Separator();
-        ImGui::Text("Statistics:");
-        ImGui::Text("  Primal vertices: %zu", appState.primalVertices.size());
-        ImGui::Text("  Primal faces: %zu", appState.primalFaces.size());
-        ImGui::Text("  Dual nodes: %zu", appState.graph->numNodes());
-    }
-    
-    ImGui::End();
-    
-    // Create sphere dialog
-    if (appState.showCreateDialog) {
-        ImGui::SetNextWindowPos(ImVec2(400, 200), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_FirstUseEver);
-        ImGui::Begin("Create New Sphere", &appState.showCreateDialog);
-        
-        static int newFrequency = 3;
-        static int weightFuncIndex = 0;
-        static bool newRunOpt = true;
-        
-        ImGui::Text("Sphere Parameters:");
-        ImGui::Separator();
-        
-        ImGui::InputInt("Q-Frequency", &newFrequency);
-        // Clamp to reasonable range
-        if (newFrequency < 1) newFrequency = 1;
-        if (newFrequency > 20) newFrequency = 20;
-        ImGui::Text("Expected dual cells: %d", 10 * newFrequency * newFrequency + 2);
-        
-        ImGui::Separator();
-        ImGui::Checkbox("Run Optimization", &newRunOpt);
-        
-        if (newRunOpt) {
-            const char* weightFuncs[] = {
-                "f1: 2|lat|/π (angles at poles)",
-                "f2: 1-f1 (area at poles)",
-                "f3: cos²(lat) (area at poles)",
-                "f4: sin²(lat) (angles at poles)",
-                "f5: 1 (pure area)",
-                "f6: 0 (pure angle)"
-            };
-            ImGui::Combo("Weight Function", &weightFuncIndex, weightFuncs, 6);
-        }
-        
-        ImGui::Separator();
-        
-        if (ImGui::Button("Create", ImVec2(120, 0))) {
-            appState.frequency = newFrequency;
-            appState.weightFunc = static_cast<WeightFunction>(weightFuncIndex);
-            appState.runOptimization = newRunOpt;
-            appState.needsRebuild = true;
-            appState.showCreateDialog = false;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-            appState.showCreateDialog = false;
-        }
-        
-        ImGui::End();
-    }
+float computeMorphFactor(const AppState& state) {
+  if (!state.enableMorph) {
+    return 0.0f;
+  }
+
+  const float zoomStart = 3.6f;
+  const float zoomEnd = 1.2f;
+  const float distance = state.camera.getDistance();
+  float factor = (zoomStart - distance) / (zoomStart - zoomEnd);
+  if (factor < 0.0f) factor = 0.0f;
+  if (factor > 1.0f) factor = 1.0f;
+  return factor * factor * (3.0f - 2.0f * factor);
 }
+
+void renderUi(AppState& state) {
+  static const double minRadius = 0.25;
+  static const double maxRadius = 5.0;
+
+  ImGui::SetNextWindowPos(ImVec2(12, 12), ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowSize(ImVec2(330, 380), ImGuiCond_FirstUseEver);
+  if (ImGui::Begin("Spherical Tiling")) {
+    ImGui::Text("Earth tile morph viewer");
+    ImGui::Separator();
+
+    bool rebuildRequested = false;
+    rebuildRequested |= ImGui::SliderInt("Frequency (q)", &state.frequency, 1, 24);
+    rebuildRequested |= ImGui::SliderScalar("Radius", ImGuiDataType_Double, &state.radius, &minRadius, &maxRadius, "%.2f");
+
+    if (ImGui::Button("Rebuild")) {
+      state.needsRebuild = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Reset Camera")) {
+      state.camera.reset();
+    }
+
+    if (rebuildRequested) {
+      ImGui::TextUnformatted("Press Rebuild to apply mesh changes");
+    }
+
+    ImGui::SeparatorText("Overlays");
+    ImGui::Checkbox("Earth Tiles", &state.showEarth);
+    ImGui::Checkbox("Icosahedron", &state.showIcosahedron);
+    ImGui::Checkbox("Subdivision", &state.showSubdivision);
+    ImGui::Checkbox("Primal", &state.showPrimal);
+    ImGui::Checkbox("Primal Debug", &state.showPrimalDebug);
+    ImGui::Checkbox("Dual Outline", &state.showDual);
+
+    ImGui::SeparatorText("Morph");
+    ImGui::Checkbox("Enable Zoom Morph", &state.enableMorph);
+    ImGui::Text("Morph factor: %.2f", computeMorphFactor(state));
+    ImGui::Text("Camera distance: %.2f", state.camera.getDistance());
+    ImGui::Text("Azimuth: %.1f deg", state.camera.getAzimuth() * 180.0f / static_cast<float>(M_PI));
+    ImGui::Text("Latitude: %.1f deg", state.camera.getLatitude() * 180.0f / static_cast<float>(M_PI));
+
+    if (state.mesh) {
+      const Mesh& subdivided = state.mesh->getSubdividedMesh();
+      const Mesh& dual = state.mesh->getDualMesh();
+      const DualTopologyReport& report = state.renderer->getValidationReport();
+      ImGui::SeparatorText("Counts");
+      ImGui::Text("Subdivided vertices: %ld", static_cast<long>(subdivided.vertices.cols()));
+      ImGui::Text("Subdivided faces:    %ld", static_cast<long>(subdivided.faces.size()));
+      ImGui::Text("Dual faces:          %ld", static_cast<long>(dual.faces.size()));
+      ImGui::Text("Pentagons:           %ld", static_cast<long>(report.pentagons));
+      ImGui::Text("Hexagons:            %ld", static_cast<long>(report.hexagons));
+      ImGui::Text("Topology:            %s", report.valid ? "valid" : "invalid");
+      if (!report.valid && !report.errors.empty()) {
+        ImGui::TextWrapped("%s", report.errors.front().c_str());
+      }
+    }
+
+    ImGui::SeparatorText("Earth Raster");
+    ImGui::TextWrapped("%s", state.earthStatus.c_str());
+  }
+  ImGui::End();
+}
+
+} // namespace
 
 int main() {
-    // Install signal handlers for crashes
-    std::signal(SIGSEGV, signalHandler);
-    std::signal(SIGABRT, signalHandler);
-    
-    // Set stderr to unbuffered for immediate crash report output
-    std::setvbuf(stderr, nullptr, _IONBF, 0);
-    
-    std::cerr << "Spherical Tiling GUI starting..." << std::endl;
-    std::cerr << "Signal handlers installed (SIGSEGV, SIGABRT)" << std::endl;
-    
-    try {
-        // Initialize GLFW
-        if (!glfwInit()) {
-            std::cerr << "Failed to initialize GLFW" << std::endl;
-            return -1;
-        }
-        
-        // Set OpenGL version (3.3 Core)
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-        
+  glfwSetErrorCallback(glfwErrorCallback);
+  if (!glfwInit()) {
+    std::cerr << "Failed to initialize GLFW\n";
+    return 1;
+  }
+
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+  glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 #ifdef __APPLE__
-        glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+  glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 #endif
-        
-        // Create window
-        GLFWwindow* window = glfwCreateWindow(1280, 720, "Spherical Tiling - GUI Viewer", nullptr, nullptr);
-        if (!window) {
-            std::cerr << "Failed to create GLFW window" << std::endl;
-            glfwTerminate();
-            return -1;
-        }
-        
-        glfwMakeContextCurrent(window);
-        glfwSwapInterval(1); // Enable vsync
-        
-        // Set callbacks
-        glfwSetMouseButtonCallback(window, mouseButtonCallback);
-        glfwSetCursorPosCallback(window, cursorPosCallback);
-        glfwSetScrollCallback(window, scrollCallback);
-        
-        // Initialize GLAD
-        if (!gladLoadGL(glfwGetProcAddress)) {
-            std::cerr << "Failed to initialize GLAD" << std::endl;
-            glfwDestroyWindow(window);
-            glfwTerminate();
-            return -1;
-        }
-        
-        // Setup ImGui
-        IMGUI_CHECKVERSION();
-        ImGui::CreateContext();
-        if (!ImGui::GetCurrentContext()) {
-            std::cerr << "Failed to create ImGui context" << std::endl;
-            glfwDestroyWindow(window);
-            glfwTerminate();
-            return -1;
-        }
-        
-        ImGuiIO& io = ImGui::GetIO();
-        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-        
-        ImGui::StyleColorsDark();
-        
-        if (!ImGui_ImplGlfw_InitForOpenGL(window, true)) {
-            std::cerr << "Failed to initialize ImGui GLFW backend" << std::endl;
-            ImGui::DestroyContext();
-            glfwDestroyWindow(window);
-            glfwTerminate();
-            return -1;
-        }
-        
-        if (!ImGui_ImplOpenGL3_Init("#version 330")) {
-            std::cerr << "Failed to initialize ImGui OpenGL3 backend" << std::endl;
-            ImGui_ImplGlfw_Shutdown();
-            ImGui::DestroyContext();
-            glfwDestroyWindow(window);
-            glfwTerminate();
-            return -1;
-        }
-        
-        // Setup OpenGL state
-        glEnable(GL_DEPTH_TEST);
-        glLineWidth(2.0f);
-        
-        // Initialize renderer after OpenGL is ready
-        std::cerr << "Initializing MeshRenderer..." << std::endl;
-        renderer = new MeshRenderer();
-        std::cerr << "MeshRenderer initialized successfully" << std::endl;
-        
-        // Build initial sphere
-        buildSphere();
-        
-        // Main loop
-        while (!glfwWindowShouldClose(window)) {
-            try {
-                glfwPollEvents();
-                
-                // Rebuild sphere if needed
-                if (appState.needsRebuild) {
-                    buildSphere();
-                }
-                
-                // Get framebuffer size
-                int displayWidth, displayHeight;
-                glfwGetFramebufferSize(window, &displayWidth, &displayHeight);
-                
-                // Update camera projection
-                float aspect = static_cast<float>(displayWidth) / static_cast<float>(displayHeight);
-                camera.setPerspective(45.0f, aspect, 0.1f, 100.0f);
-                
-                // Clear screen
-                glViewport(0, 0, displayWidth, displayHeight);
-                glClearColor(0.2f, 0.2f, 0.25f, 1.0f);
-                glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-                
-                // Render meshes
-                Eigen::Matrix4f viewProj = camera.getProjectionMatrix() * camera.getViewMatrix();
-                
-                if (appState.showPrimal) {
-                    renderer->renderPrimal(viewProj, Eigen::Vector3f(1.0f, 0.0f, 0.0f)); // Red
-                }
-                
-                if (appState.showDual) {
-                    renderer->renderDual(viewProj, Eigen::Vector3f(0.0f, 0.0f, 0.0f)); // Black
-                }
-                
-                if (appState.showTriangles) {
-                    renderer->renderTriangles(viewProj, Eigen::Vector3f(0.0f, 1.0f, 0.0f)); // Green
-                }
-                
-                // Render UI
-                ImGui_ImplOpenGL3_NewFrame();
-                ImGui_ImplGlfw_NewFrame();
-                ImGui::NewFrame();
-                
-                renderUI();
-                
-                ImGui::Render();
-                ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-                
-                glfwSwapBuffers(window);
-            } catch (const std::exception& e) {
-                std::cerr << "ERROR in render loop: " << e.what() << std::endl;
-                printStackTrace();
-                // Continue running but skip this frame
-            } catch (...) {
-                std::cerr << "UNKNOWN ERROR in render loop" << std::endl;
-                printStackTrace();
-                // Continue running but skip this frame
-            }
-        }
-        
-        // Cleanup
-        if (renderer) {
-            delete renderer;
-            renderer = nullptr;
-        }
-        
-        ImGui_ImplOpenGL3_Shutdown();
-        ImGui_ImplGlfw_Shutdown();
-        ImGui::DestroyContext();
-        
-        glfwDestroyWindow(window);
-        glfwTerminate();
-        
-        return 0;
-    } catch (const std::exception& e) {
-        std::cerr << "FATAL ERROR in main(): " << e.what() << std::endl;
-        printStackTrace();
-        if (renderer) {
-            delete renderer;
-            renderer = nullptr;
-        }
-        glfwTerminate();
-        return -1;
-    } catch (...) {
-        std::cerr << "UNKNOWN FATAL ERROR in main()" << std::endl;
-        printStackTrace();
-        if (renderer) {
-            delete renderer;
-            renderer = nullptr;
-        }
-        glfwTerminate();
-        return -1;
+
+  GLFWwindow* window = glfwCreateWindow(kWindowWidth, kWindowHeight, "Spherical Tiling Viewer", nullptr, nullptr);
+  if (!window) {
+    std::cerr << "Failed to create GLFW window\n";
+    glfwTerminate();
+    return 1;
+  }
+
+  glfwMakeContextCurrent(window);
+  glfwSwapInterval(1);
+
+  if (!gladLoadGL(glfwGetProcAddress)) {
+    std::cerr << "Failed to initialize GLAD\n";
+    glfwDestroyWindow(window);
+    glfwTerminate();
+    return 1;
+  }
+
+  AppState state;
+  state.renderer = std::make_shared<MeshRenderer>();
+  state.camera.setPerspective(45.0f, static_cast<float>(kWindowWidth) / static_cast<float>(kWindowHeight), 0.1f, 100.0f);
+  std::string textureError;
+  if (state.renderer->loadEarthTexture("assets/earth/blue_marble_5400x2700_december.jpg", textureError)) {
+    state.earthStatus = "Loaded assets/earth/blue_marble_5400x2700_december.jpg";
+  } else {
+    state.earthStatus = "Earth raster load failed: " + textureError;
+  }
+
+  glfwSetWindowUserPointer(window, &state);
+  glfwSetFramebufferSizeCallback(window, framebufferSizeCallback);
+  glfwSetMouseButtonCallback(window, mouseButtonCallback);
+  glfwSetCursorPosCallback(window, cursorPosCallback);
+  glfwSetScrollCallback(window, scrollCallback);
+
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  ImGui::StyleColorsDark();
+  ImGui_ImplGlfw_InitForOpenGL(window, true);
+  ImGui_ImplOpenGL3_Init(kGlslVersion);
+
+  glEnable(GL_DEPTH_TEST);
+  glClearColor(0.92f, 0.94f, 0.98f, 1.0f);
+
+  try {
+    rebuildMesh(state);
+  } catch (const std::exception& ex) {
+    std::cerr << "Initial mesh build failed: " << ex.what() << '\n';
+  }
+
+  while (!glfwWindowShouldClose(window)) {
+    glfwPollEvents();
+
+    if (state.needsRebuild) {
+      try {
+        rebuildMesh(state);
+      } catch (const std::exception& ex) {
+        std::cerr << "Mesh rebuild failed: " << ex.what() << '\n';
+        state.needsRebuild = false;
+      }
     }
+
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+    renderUi(state);
+    ImGui::Render();
+
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    Eigen::Matrix4f vp = state.camera.getProjectionMatrix() * state.camera.getViewMatrix();
+    glm::mat4 glmVp;
+    std::memcpy(&glmVp[0][0], vp.data(), 16 * sizeof(float));
+    state.renderer->renderAllMeshes(glmVp, getVisibility(state), state.camera.getEyePosition(), computeMorphFactor(state));
+
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    glfwSwapBuffers(window);
+  }
+
+  ImGui_ImplOpenGL3_Shutdown();
+  ImGui_ImplGlfw_Shutdown();
+  ImGui::DestroyContext();
+  glfwDestroyWindow(window);
+  glfwTerminate();
+  return 0;
 }

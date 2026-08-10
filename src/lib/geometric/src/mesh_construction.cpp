@@ -1,7 +1,10 @@
 #include "mesh_construction.h"
 
+#include <cmath>
+#include <limits>
+#include <stdexcept>
+#include <string>
 #include <unordered_set>
-#include <numbers>
 
 struct EdgeHash {
   size_t operator()(const Edge& e) const noexcept {
@@ -17,8 +20,8 @@ struct Key { int64_t x, y, z; };
 struct KeyHash {
   size_t operator()(const Key& k) const noexcept {
     // 64-bit mix
-    uint64_t h = uint64_t(k.x) * 0x9e3779b97f4a7c15ULL
-                ^ (uint64_t(k.y) + 0x85ebca6b) + (uint64_t(k.x) << 6) + (uint64_t(k.x) >> 2);
+    uint64_t h = (uint64_t(k.x) * 0x9e3779b97f4a7c15ULL)
+               ^ ((uint64_t(k.y) + 0x85ebca6b) + (uint64_t(k.x) << 6) + (uint64_t(k.x) >> 2));
     h ^= uint64_t(k.z) + 0xc2b2ae35 + (h << 6) + (h >> 2);
     return size_t(h ^ (h >> 33));
   }
@@ -38,6 +41,20 @@ inline Key quantize_unit(const Eigen::Vector3d& u) {
     (int64_t)std::llround(u.z() * s)
   };
 };
+
+MeshConstructor::MeshConstructor(double R, uint16_t q) : _radius(R), _frequency(q) {
+  if (!std::isfinite(_radius) || _radius <= 0.0) {
+    throw std::invalid_argument("MeshConstructor requires radius > 0");
+  }
+  if (_frequency == 0) {
+    throw std::invalid_argument("MeshConstructor requires frequency > 0");
+  }
+
+  generateIcosahedron();
+  subdivideIcosahedron();
+  projectSubdivisions();
+  constructDualCells();
+}
 
 void MeshConstructor::getEdgesFromFaces(const Faces& faces, Edges& edges) {
   std::unordered_set<Edge, EdgeHash> edgeSet;
@@ -277,4 +294,42 @@ void MeshConstructor::constructDualCells() {
 
   sortFaceVertices(F, V, primalV);
   getEdgesFromFaces(F, E);
+}
+
+DualTopologyReport validateDualTopology(const MeshConstructor& constructor) {
+  DualTopologyReport report;
+  report.expectedDualCells = static_cast<std::size_t>(10 * constructor.getFrequency() * constructor.getFrequency() + 2);
+
+  const Mesh& dual = constructor.getDualMesh();
+  report.actualDualCells = dual.faces.size();
+  if (report.actualDualCells != report.expectedDualCells) {
+    report.valid = false;
+    report.errors.push_back("dual face count does not match Goldberg expectation");
+  }
+
+  for (const auto& face : dual.faces) {
+    const std::size_t degree = static_cast<std::size_t>(face.size());
+    if (degree == 5) {
+      ++report.pentagons;
+    } else if (degree == 6) {
+      ++report.hexagons;
+    } else {
+      ++report.otherCells;
+      report.valid = false;
+      report.errors.push_back("encountered a dual cell that is neither pentagon nor hexagon");
+    }
+  }
+
+  if (report.pentagons != 12) {
+    report.valid = false;
+    report.errors.push_back("dual topology does not contain exactly 12 pentagons");
+  }
+
+  const std::size_t expectedHexagons = report.expectedDualCells >= 12 ? report.expectedDualCells - 12 : 0;
+  if (report.hexagons != expectedHexagons) {
+    report.valid = false;
+    report.errors.push_back("hexagon count does not match Goldberg expectation");
+  }
+
+  return report;
 }

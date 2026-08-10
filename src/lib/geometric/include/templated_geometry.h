@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Eigen/Dense>
-#include <ceres/jet.h>
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
@@ -51,6 +51,9 @@ Eigen::Matrix<T, 3, 1> sphericalCircumcenterT(
 // Compute spherical polygon area using L'Huilier's formula (templated)
 template <typename T>
 T sphericalPolygonAreaT(const std::vector<Eigen::Matrix<T, 3, 1>>& vertices, const T& radius) {
+    using std::abs;
+    using std::atan2;
+
     if (vertices.size() < 3) return T(0.0);
     
     T area = T(0.0);
@@ -78,7 +81,19 @@ T sphericalPolygonAreaT(const std::vector<Eigen::Matrix<T, 3, 1>>& vertices, con
         area += excess;
     }
     
-    return area * radius * radius;
+    return abs(area) * radius * radius;
+}
+
+template <typename T>
+Eigen::Matrix<T, 2, 1> cartesianToLatLon(const Eigen::Matrix<T, 3, 1>& point) {
+    using std::asin;
+    using std::atan2;
+
+    Eigen::Matrix<T, 3, 1> unit = point.normalized();
+    return Eigen::Matrix<T, 2, 1>(
+        asin(unit.z()),
+        atan2(unit.y(), unit.x())
+    );
 }
 
 // Compute angles in tangent space at a primal vertex
