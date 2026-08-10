@@ -106,6 +106,7 @@ The frequency parameter controls the fineness of the subdivision:
 - `MeshConstructor` now validates its inputs and rejects non-positive radii or frequencies.
 - The repository includes `assets/earth/blue_marble_5400x2700_december.jpg` as the default Earth raster for tile coloring.
 - Spherical polygon area helpers return unsigned area magnitudes so metric-style callers are not sensitive to polygon winding.
+- Long-term rendering and world-data direction is documented in `WORLD_RENDERING_ROADMAP.md`.
 - Historical GUI notes remain in `GUI_IMPLEMENTATION.md` and `FEATURE_SUMMARY.md`; they describe an older, more ambitious GUI direction than the current minimal viewer.
 
 ## License
